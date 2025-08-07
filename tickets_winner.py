@@ -1,125 +1,205 @@
 import requests
 import time
-import execjs
+import string
 import random
 
 
-# # 源码函数1 #号后面的是注释，起解释说明作用
-# def funtion_1():
-#     # 函数具体内容省略
-#     return value_1
-#
-#
-# # 源码函数2，假设有一个参数
-# def funtion_2(arg1):
-#     # 函数具体内容省略
-#     return value_2
-#
-#
-# # 源码函数3，假设提交抢票请求的函数，假设有两个参数，
-# def funtion_3(arg1, arg2):
-#     # 函数具体内容省略
-#     return res
+# -------- 请求1. 获取front-trace-id --------
+def base36(num):
+    alphabet = string.digits + string.ascii_lowercase
+    if num == 0:
+        return alphabet[0]
+    base36 = ''
+    while num:
+        num, i = divmod(num, 36)
+        base36 = alphabet[i] + base36
+    return base36
 
 
-# 主函数，也就是启动函数，在这里将其他函数串起来，***这是本文重点***
-# def run():
-#     # 调用funtion_1，获取返回值value_1
-#     value_1 = funtion_1()
-#     # 调用funtion_2，获取返回值value_2，注意：将value_1传参给funtion_2
-#     value_2 = funtion_2(value_1)
-# 
-#     # ***以下代码是时间控制器，控制到规定时间才提交抢票请求，否则就一直等待***
-#     round_num = 0
-#     while True:
-#         if time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())[-8:] >= start_time:
-#             print('任务启动时间：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
-#             break
-#         time.sleep(0.1)
-#         round_num += 1
-#         if round_num % 600 == 0:
-#             print('等待中...：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
-#     # ***以上代码是时间控制器，控制到规定时间才提交抢票请求，否则就一直等待***
-# 
-#     # ***以下代码是提交抢票请求，为了提高成功率，我加了控制逻辑***
-#     requests_times = 0
-#     while True:
-#         if requests_times >= max_requests_times:
-#             print('超过自定义最大请求次数，程序退出！')
-#             break
-#         try:
-#             requests_times += 1
-#             # 调用funtion_3，也就是提交抢票请求，获取返回值res，注意：将value_1和value_2传参给funtion_3，这就叫串起来
-#             res = funtion_3(arg1, arg2)
-#             print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), '>>>', res.text)
-#             res_json = res.json()
-#             if res_json["comments"] == "成功":
-#                 print('抢票成功，请及时付款，超时订单自动取消')
-#                 break
-#         except Exception as e:
-#             print('请求出错，时间：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), e)
-#             break
+def get_front_trace_id():
+    timestamp = int(time.time() * 1000)
+    timestamp_base36 = base36(timestamp)
+    random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
+    return timestamp_base36 + random_str
 
 
-def get_prefilledlist(access_token):
-    pass
+# -------- 请求1. 获取front-trace-id --------
 
 
+# -------- 请求2. 获取抢票预填信息 --------
+# 添加ver参数
+def get_prefilledlist(access_token, ver):
+    url = 'https://65373d6e95c3170001074c57.caiyicloud.com/cyy_gatewayapi/show/buyer/v3/pre_filed_info/676d5b8c3958580001b70179'
+    headers = {
+        "Host": "65373d6e95c3170001074c57.caiyicloud.com",
+        "Connection": "keep-alive",
+        "terminal-src": "WEIXIN_MINI",
+        "content-type": "application/json",
+        "src": "weixin_mini",
+        "ver": ver,
+        "access-token": access_token,
+        "merchant-id": "65373d6e95c3170001074c57",
+        "front-trace-id": get_front_trace_id(),
+        "Accept-Encoding": "gzip,compress,br,deflate",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/4G Language/zh_CN",
+        "Referer": "https://servicewechat.com/wxe3489c9feaf8f361/42/page-frame.html"
+    }
+    params = {
+        "needDetails": "true",
+        "source": "FROM_SHOW_DETAIL_PRE_FILED",
+        "src": "weixin_mini",
+        "merchantId": "65373d6e95c3170001074c57",
+        "ver": ver,
+        "appId": "wxe3489c9feaf8f361"
+    }
+    # 使用正确的GET参数传递方式
+    res = requests.get(url=url, headers=headers, params=params)
+    try:
+        prefilledlist = res.json()['data']
+        return (
+            prefilledlist['preFiledId'],
+            prefilledlist['userAudienceIds'][0],
+            prefilledlist['bizSeatPlanId'],
+            prefilledlist['bizShowId'],
+            prefilledlist['bizShowSessionId']
+        )
+    except:
+        print("获取预填信息失败，请检查网络或参数")
+        return None, None, None, None, None
+
+
+# -------- 请求2. 获取抢票预填信息 --------
+
+# -------- 请求3. 获取抢票信息 --------
 def get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId, skuId, showId, sessionId, access_token,
                ticketItems_id):
-    pass
+    url = 'https://65373d6e95c3170001074c57.caiyicloud.com/cyy_gatewayapi/trade/buyer/order/v5/create_order'
+    headers = {
+        "Host": "65373d6e95c3170001074c57.caiyicloud.com",
+        "Connection": "keep-alive",
+        "terminal-src": "WEIXIN_MINI",
+        "content-type": "application/json",
+        "src": "weixin_mini",
+        "ver": ver,
+        "access-token": access_token,
+        "merchant-id": "65373d6e95c3170001074c57",
+        "front-trace-id": get_front_trace_id(),
+        "Accept-Encoding": "gzip,compress,br,deflate",
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/4G Language/zh_CN",
+        "Referer": "https://servicewechat.com/wxe3489c9feaf8f361/42/page-frame.html"
+    }
+    data = {
+        "locationParam": {"bsCityId": bsCityId, "locationCityId": locationCityId},
+        "preFiledId": preFiledId,
+        "priceItemParam": [{
+            "applyTickets": [],
+            "priceItemType": "TICKET_FEE",
+            "priceItemSpecies": "SEAT_PLAN",
+            "priceItemVal": "280.00",
+            "priceDisplay": "￥280",
+            "priceItemName": "票款总额",
+            "direction": "INCREASE"
+        }],
+        "merchantId": "65373d6e95c3170001074c57",
+        "src": "weixin_mini",
+        "appId": "wxe3489c9feaf8f361",
+        "priorityId": "",
+        "orderSource": "COMMON",
+        "addressParam": {},
+        "many2OneAudience": {},
+        "ver": ver,
+        "items": [{
+            "sku": {
+                "ticketItems": [{"id": ticketItems_id, "audienceId": audienceId}],
+                "ticketPrice": "280.00",
+                "skuId": skuId,
+                "qty": 1,
+                "skuType": "SINGLE"
+            },
+            "spu": {
+                "addPromoVersionHash": "EMPTY_PROMOTION_HASH",
+                "promotionVersionHash": "EMPTY_PROMOTION_HASH",
+                "showId": showId,
+                "sessionId": sessionId
+            },
+            "deliverMethod": "E_TICKET"
+        }],
+        "paymentParam": {
+            "totalAmount": "280.00",
+            "payAmount": "280.00"
+        },
+        "addPurchasePromotionId": ""
+    }
+    return requests.post(url=url, headers=headers, json=data)
 
 
-def run(ver=None, bsCityId=None, locationCityId=None):
+# -------- 请求3. 获取抢票信息 --------
+
+# -------- !!!!!!!! 抢票 !!!!!!!! --------
+def run():
     print('>>>>>程序已启动>>>>>')
-    prefilledlist = get_prefilledlist(access_token)
-    preFiledId = prefilledlist['preFiledId']
-    audienceId = prefilledlist['userAudienceIds'][0]
-    skuId = prefilledlist['bizSeatPlanId']
-    showId = prefilledlist['bizShowId']
-    sessionId = prefilledlist['bizShowSessionId']
-    print('>>>>>获取预填信息成功>>>>>preFiledId：%s>>>audienceId：%s>>>skuId：%s>>>showId：%s>>>sessionId：%s>>>' % (
-        preFiledId, audienceId, skuId, showId, sessionId))
-    round_num = 0
+
+    # 添加ver参数
+    preFiledId, audienceId, skuId, showId, sessionId = get_prefilledlist(access_token, ver)
+
+    if not all([preFiledId, audienceId, skuId, showId, sessionId]):
+        print(">>>>>获取预填信息失败，程序退出！>>>>>")
+        return
+
+    print(
+        f'>>>>>获取预填信息成功>>>>>preFiledId: {preFiledId}>>>audienceId: {audienceId}>>>skuId: {skuId}>>>showId: {showId}>>>sessionId: {sessionId}>>>')
+
+    # 精确时间控制
+    today = time.strftime('%Y-%m-%d', time.localtime())
+    target_time = time.mktime(time.strptime(f"{today} {start_time}", '%Y-%m-%d %H:%M:%S'))
+    print(f"等待开抢时间: {today} {start_time}")
+
     while True:
-        if time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())[-8:] >= start_time:
-            print('任务启动时间：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+        current_time = time.time()
+        if current_time >= target_time:
+            print(f'任务启动时间: {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}')
             break
-        time.sleep(0.2)
-        round_num += 1
-        if round_num % 600 == 0:
-            print('等待中...：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
+        # 动态调整等待时间
+        sleep_time = min(0.1, target_time - current_time)
+        if sleep_time > 0:
+            time.sleep(sleep_time)
+
+    # 生成ticketItems_id
+    ticketItems_id = f"{int(time.time() * 1000) + random.randint(50, 80)}100000008"
+
     requests_times = 0
-    # 整6点生成ticketItems_id
-    ticketItems_id = str(int(time.time() * 1000) + random.randint(50, 80)) + '100000008'
-    while True:
-        if requests_times >= max_requests_times:
-            print('超过自定义最大请求次数，程序退出！')
-            break
+    while requests_times < max_requests_times:
         try:
-            # 正式发起请求
             requests_times += 1
-            res = get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId, skuId, showId, sessionId,
-                             access_token, ticketItems_id)
-            print(time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), '>>>', res.text)
+            res = get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId,
+                             skuId, showId, sessionId, access_token, ticketItems_id)
+
+            print(
+                f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} >>> 请求次数: {requests_times} >>> {res.text[:100]}...")
+
             res_json = res.json()
-            if res_json["comments"] == "正在为您自动尝试" or res_json["comments"] == "该演出还未开售":
-                time.sleep(1)  # 系统默认3秒重复一次请求
-            elif res_json["comments"] == "成功":
+            if res_json.get("comments") in ["正在为您自动尝试", "该演出还未开售"]:
+                time.sleep(0.3)  # 减少等待时间
+            elif res_json.get("comments") == "成功":
+                print(">>>>>>抢票成功！请尽快到手机端付款！<<<<<<")
                 break
         except Exception as e:
-            print('请求出错，时间：', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()), e)
-            break
+            print(f'请求出错: {e}')
+            time.sleep(0.5)  # 出错后短暂等待
 
-# 启动程序之前要准备的参数
+    if requests_times >= max_requests_times:
+        print('超过最大请求次数，程序退出！')
+
+
+# -------- !!!!!!!! 抢票 !!!!!!!! --------
+
 if __name__ == '__main__':
+    # 配置参数
     start_time = '18:00:00'  # 抢票开始时间
-    ver = "4.20.2"
-    bsCityId = "BL1034"  # 默认北京，最好换成自己的
-    locationCityId = "1101"  # 默认北京，最好换成自己的
-    # access_token每次抢票前两小时修改成最新的
-    access_token = "your token"
-    max_requests_times = 3  # 设置最多请求3次，如果请求3次还没抢到说明这次希望不大了
+    ver = "4.40.1"  # 当前版本
+    bsCityId = "BL1034"  # 省份ID
+    locationCityId = "1101"  # 城市ID
+    access_token = "eyJ0eXAiOiJKV1QiLCJjdHkiOiJKV1QiLCJ6aXAiOiJERUYiLCJhbGciOiJSUzUxMiJ9.eNqEUUtzgjAQ_i85e4CGJOBNUSszOlgr7dgLEyFUZjDJQLA-xv_eDdiOp_aW3e-x326uSPHW7CNZKDS8Iq51lKMh-joJ7PlBFhSCF36BqYsGqJWlkh0MhdKif6tzXO7p5W3svC83k-OzpPOP7UtlNJ18ohuoGlH_2O_KS6hyAarZfJEuwaZpd-PfJiWY4ZyKgGTYZY7juA7zMsKAB8q1qixpnGyna-gcTJZYa5uB-gwzkWPKfCqerJAEu8zzeuF_NGpjAi_WouZG_cklYGnOGoK4EEHU2Z5L068n26oaoKOoGzhTh2tem9J0FaIgFCdd1mJTHqycEY9iAsbEB2pWC24eIOL59A4158aIw_1E4ShKt1EaLuJkknanSFfJOpyPXqfpajHazOL1sp_0OAL8IacUlV2tz2m_RXI7zta3bwAAAP__.F8mBouHeYQaKIUnr1vTkMfjNM-nAa3Z0ykFqWtnx8AvRQNZ5Gn4rWwmY6B66Wl--4pg54WhjVlYBdjMbak5zPzGXeqOl4MKanlxGTUQ4bkfmTyFBMAQzJ4BnukObWP_ubzD7sRgdhJhZy6S8S_ET9sRKi5LCsdQBczgxNEgc6Jg"
+    max_requests_times = 200  # 最大请求次数
+    # 启动抢票
     run()
-
-
