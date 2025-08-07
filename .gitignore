@@ -1,0 +1,15 @@
+# 忽略环境变量文件
+.env
+*.env
+.env.*
+
+# 忽略敏感文件
+secrets/
+config_private.py
+
+# 忽略Python缓存
+__pycache__/
+*.py[cod]
+
+# 忽略系统文件
+.DS_Store
