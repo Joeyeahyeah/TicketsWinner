@@ -3,7 +3,9 @@ import time
 import random
 from config import Config
 
+
 # -------- 请求1. 获取front-trace-id --------
+# 已经转移到config.py中
 # def base36(num):
 #     alphabet = string.digits + string.ascii_lowercase
 #     if num == 0:
@@ -20,8 +22,7 @@ from config import Config
 #     timestamp_base36 = base36(timestamp)
 #     random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
 #     return timestamp_base36 + random_str
-
-
+# 已经转移到config.py中
 # -------- 请求1. 获取front-trace-id --------
 
 
@@ -129,6 +130,8 @@ def get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId, skuId, sho
         },
         "addPurchasePromotionId": ""
     }
+    # 返回抢票信息
+    print(f"请求抢票信息: {data}")
     return requests.post(url=url, headers=headers, json=data)
 
 
@@ -149,7 +152,7 @@ def run():
         return
 
     print(
-        f'>>>>>获取预填信息成功>>>>>preFiledId: {preFiledId}>>>audienceId: {audienceId}>>>skuId: {skuId}>>>showId: {showId}>>>sessionId: {sessionId}>>>')
+        f'>>>>>获取预填信息成功>>>>>\npreFiledId: {preFiledId} >>> audienceId: {audienceId}>>>skuId: {skuId}>>>showId: {showId}>>>sessionId: {sessionId}>>>')
 
     # 精确时间控制
     today = time.strftime('%Y-%m-%d', time.localtime())
@@ -200,7 +203,7 @@ if __name__ == '__main__':
     start_time = Config.START_TIME  # 抢票开始时间
     ver = Config.VER  # 当前版本
     bsCityId = Config.BS_CITY_ID  # 省份ID
-    locationCityId = Config.LOCATION_CITY_ID # 城市ID
+    locationCityId = Config.LOCATION_CITY_ID  # 城市ID
     access_token = Config.ACCESS_TOKEN  # 当前版本
     max_requests_times = Config.MAX_REQUESTS  # 最大请求次数
     # 启动抢票

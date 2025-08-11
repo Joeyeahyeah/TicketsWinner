@@ -26,6 +26,7 @@ class Config:
         timestamp = int(time.time() * 1000)
         timestamp_base36 = Config._base36(timestamp)
         random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
+        print(f"front-trace-id: {timestamp_base36 + random_str}")
         return timestamp_base36 + random_str
 
     @staticmethod
