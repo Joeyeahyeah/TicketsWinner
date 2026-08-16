@@ -2,7 +2,7 @@
 
 用法:
     python -m damai.main login   # 扫码登录，保存 storage_state（抢票前一天执行）
-    python -m damai.main grab    # 加载登录态，定时等待并下单（下单链路待抓包实现）
+    python -m damai.main grab    # 加载登录态，定时等待并在页面 JS 环境调用 mtop 下单
 """
 import argparse
 import logging
@@ -47,8 +47,9 @@ def cmd_grab() -> int:
             notify.send_text(DamaiConfig.SERVERCHAN_SENDKEY,
                              '大麦抢票成功', '请尽快到手机端付款！')
         else:
+            logger.warning('下单流程结束，未获取到订单信息')
             notify.send_text(DamaiConfig.SERVERCHAN_SENDKEY,
-                             '大麦抢票流程结束', '下单流程未返回成功结果（占位实现）')
+                             '大麦抢票流程结束', '下单流程结束，未获取到订单信息')
     return 0
 
 
