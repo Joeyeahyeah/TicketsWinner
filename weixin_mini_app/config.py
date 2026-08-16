@@ -1,23 +1,24 @@
 import os
-from dotenv import load_dotenv
-import time
-import string
 import random
+import string
+import time
 
-load_dotenv()  # 加载.env文件
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
-class Config:
+class WeixinMiniAppConfig:
     # 基础配置
     APP_ID = os.getenv("WECHAT_APP_ID")
     ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
-    VER = os.getenv("VER", "4.40.1")
+    APP_VERSION = os.getenv("APP_VERSION", "4.40.1")
 
     # 业务配置
-    BS_CITY_ID = os.getenv("BS_CITY_ID", "BL1034")
+    PROVINCE_CITY_ID = os.getenv("PROVINCE_CITY_ID", "BL1034")
     LOCATION_CITY_ID = os.getenv("LOCATION_CITY_ID", "1101")
-    MAX_REQUESTS = int(os.getenv("MAX_REQUESTS", 200))
-    START_TIME = os.getenv("START_TIME", "18:00:00")
+    MAX_ATTEMPTS = int(os.getenv("MAX_ATTEMPTS", 200))
+    SALE_START_TIME = os.getenv("SALE_START_TIME", "18:00:00")
 
     # 票价配置（元），从预填信息无法可靠获取时可手动指定
     TICKET_PRICE = os.getenv("TICKET_PRICE", "280.00")
@@ -39,23 +40,22 @@ class Config:
         if missing:
             raise ValueError(f"缺少必需配置项: {', '.join(missing)}，请检查 .env 文件")
 
-    # -------- 生成 front-trace-id --------
     @staticmethod
-    def get_front_trace_id():
+    def generate_front_trace_id():
         """生成唯一跟踪ID"""
         timestamp = int(time.time() * 1000)
-        timestamp_base36 = Config._base36(timestamp)
+        timestamp_base36 = WeixinMiniAppConfig._to_base36(timestamp)
         random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
         return timestamp_base36 + random_str
 
     @staticmethod
-    def _base36(num):
+    def _to_base36(number):
         """数字转base36"""
         alphabet = string.digits + string.ascii_lowercase
-        if num == 0:
+        if number == 0:
             return alphabet[0]
         base36 = ''
-        while num:
-            num, i = divmod(num, 36)
-            base36 = alphabet[i] + base36
+        while number:
+            number, index = divmod(number, 36)
+            base36 = alphabet[index] + base36
         return base36
