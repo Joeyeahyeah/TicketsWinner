@@ -15,11 +15,12 @@ TicketsWinner/
 │   └── grabber.py           # 抢票核心逻辑
 ├── .env.example             # 环境变量模板
 ├── damai/                   # Damai 抢票模块（大麦网，Playwright + H5）
-│   ├── main.py              # 入口：login / grab 子命令
-│   ├── config.py            # DamaiConfig（读取 damai/.env）
+│   ├── main.py              # 入口：login / reserve / grab 子命令
+│   ├── config.py            # DamaiConfig（读取 damai/.env，带类型注解）
 │   ├── .env.example         # damai 环境变量模板
 │   ├── browser/             # 浏览器管理 / 扫码登录 / 反指纹
-│   └── core/                # 定时调度 / Server酱通知 / 下单（占位）
+│   ├── core/                # 定时调度 / Server酱通知 / 下单 / 预约抢票
+│   └── docs/                # 抓包指引（A/B 参数分类 + 字段模板）
 ├── requirements.txt         # 依赖
 ├── README.md
 └── AGENTS.md                # 开发指南（供编码代理参考）
@@ -156,7 +157,14 @@ playwright install chromium
 
 ### 使用流程
 
-1. **配置** `damai/.env`（参考 `damai/.env.example`）：填写 `DAMAI_ITEM_URL`（演出详情页）、`SALE_START_TIME`，下单相关 `DAMAI_API_VERSION` / `SKU_ID` / `BUYER_IDS`（均需真机抓包确认，见下方抓包指引），可选 `SERVERCHAN_SENDKEY`（Server酱微信推送）
+大麦开抢前是「预约抢票」机制：开抢前按钮为「预约抢票」，需提前选票档/数量并提交预约；倒计时归零后按钮变为「立即抢票」，点击自动勾选已预约内容直跳确认订单页。因此抢票分三步：
+
+1. **配置** `damai/.env`（参考 `damai/.env.example`）：
+   - **A 类持久参数**（抓一次，换场次才重抓）：`DAMAI_ITEM_URL`、`BUYER_IDS`（观演人 ID）、各选择器（`RESERVE_SUBMIT_SELECTOR`/`BUY_NOW_SELECTOR`/`RESERVE_SKU_SELECTOR` 等）
+   - **B 类易变参数**（抢票前一天/2 小时重抓）：`SALE_START_TIME`、`DAMAI_API_VERSION`、`SKU_ID`（可留空由程序运行时探测兜底）
+   - 可选 `SERVERCHAN_SENDKEY`（Server酱微信推送）
+   - 参数分类与抓包时机详见 [`damai/docs/packet_capture.md`](damai/docs/packet_capture.md) 第〇节
+
 2. **扫码登录**（建议抢票前一天执行）：
 
    ```powershell
@@ -164,17 +172,26 @@ playwright install chromium
    ```
 
    在打开的浏览器窗口中扫码登录，成功后登录态保存至 `damai/.auth/storage_state.json`（已 gitignore）
-3. **抢票**：
+
+3. **预约抢票**（抢票前一天/几小时执行，需用户在场观察页面）：
+
+   ```powershell
+   python -m damai.main reserve
+   ```
+
+   流程：打开详情页 → 选票档/数量/观演人 → 点「预约抢票」→「提交抢票预约」→ 探测 skuId 写入本地缓存 `reserve_state.json`
+
+4. **抢票**（抢票当天执行）：
 
    ```powershell
    python -m damai.main grab
    ```
 
-   流程：NTP 校时（ntp.aliyun.com）→ 加载登录态 → 打开详情页 → 精确等待开抢时间 → 页面 JS 环境调用 mtop 下单（触发滑块时截图推送手机等待人工处理）
+   流程：NTP 校时（ntp.aliyun.com）→ 加载登录态 → 打开详情页 → **开抢前 5 秒（`GET_SKU_BEFORE_START`）预取阶段**：走预约入口进入确认订单页、预取真实 skuId/buyerIds → 精确等待开抢 → 确认订单页页面 JS 环境调用 mtop 下单（触发滑块时截图推送手机等待人工处理）
 
 ### 抓包指引
 
-下单接口 `mtop.damai.buy.order.create` 的版本号与请求体、`skuId` 前置接口、滑块 DOM 选择器均需真机/模拟器抓包确认，详见 [`damai/docs/packet_capture.md`](damai/docs/packet_capture.md)。抓包完成后将结果回填到 `damai/.env`，无需改动代码。
+下单接口 `mtop.damai.buy.order.create` 的版本号与请求体、`skuId` 前置接口、滑块 DOM 选择器、预约入口选择器均需真机/模拟器抓包确认，详见 [`damai/docs/packet_capture.md`](damai/docs/packet_capture.md)（含 A/B 参数分类与抓包时机）。抓包完成后将结果回填到 `damai/.env`，无需改动代码。
 
 ### 注意事项
 
@@ -184,7 +201,7 @@ playwright install chromium
 
 ## 后续规划
 
-- **Damai 模块真机验证**：按抓包指引获取 `mtop.damai.buy.order.create` 版本号与请求体、`skuId`、滑块选择器，回填 `damai/.env` 后在真实场次验证下单链路（滑块选择器与响应状态判定字段需以实际抓包为准微调）
+- **Damai 模块真机验证**：按抓包指引回填 `damai/.env`（A/B 参数分类见 `packet_capture.md` 第〇节）后在真实场次验证「预约 → 预取 → 下单」完整链路（选择器、响应状态判定字段、滑块选择器需以实际抓包为准微调）
 
 > 成功率公式：**脚本质量(40%) + 网络延迟(30%) + 时间控制(20%) + 运气(10%)**
 > 建议首次抢票用非热门场次测试，熟悉流程后再抢热门场次。

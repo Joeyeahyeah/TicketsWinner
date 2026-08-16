@@ -97,8 +97,9 @@ damai/
 
 ### 当前状态与下一步
 
-- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知、`core/order.py` 下单链路（页面 JS 环境调用 mtop SDK 发起 `mtop.damai.buy.order.create`，含随机间隔重试、响应状态机、滑块检测/截图/推送/人工等待）、`core/reserve.py` 预约抢票流程（选票档/数量/观演人 → 提交抢票预约 → 探测 skuId 写入本地缓存）、`main.py` grab 流程开抢前预取阶段（走预约入口进入确认订单页预取真实 skuId/buyerIds，开抢瞬间直跳下单）
-- 待真机验证：按 `docs/packet_capture.md` 抓包获取下单接口版本号（填 `DAMAI_API_VERSION`）与请求体、`SKU_ID`、`BUYER_IDS`、滑块选择器、预约入口/立即抢票按钮选择器（5.5 节）、确认订单页 mtop 验证，回填 `damai/.env` 后在真实场次验证；`order.py` 中响应状态判定关键字与滑块选择器以实际抓包为准微调
+- 已完成：配置层（带类型注解）、浏览器管理（关闭时优雅清理）、扫码登录持久化、playwright-stealth 反指纹（2.x API）、NTP 校时定时调度、Server酱通知、`core/order.py` 下单链路（页面 JS 环境调用 mtop SDK 发起 `mtop.damai.buy.order.create`，含随机间隔重试、响应状态机、滑块检测/截图/推送/人工等待、页面关闭检测）、`core/reserve.py` 预约抢票流程（选票档/数量/观演人 → 提交抢票预约 → 探测 skuId 写入本地缓存）、`main.py` grab 流程开抢前预取阶段（走预约入口进入确认订单页预取真实 skuId/buyerIds，开抢瞬间直跳下单）
+- 已本地验证：`login`（扫码登录保存 storage_state）、`reserve`（打开详情页、配置校验拦截）、`grab`（NTP 校时、加载登录态、打开详情页、预取阶段、等开抢、缺选择器时降级提示、页面关闭时干净退出）
+- 待真机验证：按 `docs/packet_capture.md` 抓包回填 `damai/.env`（A/B 参数分类见文档第〇节）后在真实场次验证；`order.py` 响应状态判定关键字与滑块选择器以实际抓包为准微调
 - 运行入口：`python -m damai.main login` / `python -m damai.main reserve` / `python -m damai.main grab`（浏览器二进制需先 `playwright install chromium`）
 
 ### 预约抢票机制（大麦开抢前业务现状）
@@ -109,15 +110,22 @@ damai/
 - `grab` 流程在开抢前 `GET_SKU_BEFORE_START`（默认 5）秒进入预取阶段：走预约入口进入确认订单页，优先读 `reserve_state.json` 本地缓存，页面预取作为兜底，预取到的值回填 config 实例属性供 `order.create_order` 复用
 - `order.create_order` 明确要求传入的 page 必须是「确认订单页」（`window.mtop` SDK 仅在确认订单页存在，详情页调用 `_submit_once` 会失败）；`_resolve_sku_id` 优先从确认订单页上下文取，详情页作为兜底
 
+### 抓包参数分类（A/B 两类，详见 docs/packet_capture.md 第〇节）
+
+- **A 类持久参数**（抓一次，换场次才重抓）：`DAMAI_ITEM_URL`、`BUYER_IDS`、各选择器（`RESERVE_*`/`BUY_NOW_*`/`SLIDER_*`）
+- **B 类易变参数**（抢票前一天/2 小时重抓）：`SALE_START_TIME`、`DAMAI_API_VERSION`、`SKU_ID`（可留空由 order 兜底探测）、`storage_state.json`（扫码登录）
+- 选择器类配置默认空串，强制抓包填入，避免默认值导致校验失效
+
 ### 关键约定
 
 - 登录态通过 `storage_state` 复用（cookie + localStorage），抢票前一天扫码登录保存，避免抢票时登录排队
-- 反指纹必须处理：`navigator.webdriver`、`navigator.plugins`、`window.chrome`、permissions 查询等；优先用 `playwright-stealth`
+- 反指纹必须处理：`navigator.webdriver`、`navigator.plugins`、`window.chrome`、permissions 查询等；优先用 `playwright-stealth`（2.x API：`Stealth(...).apply_stealth_sync(context)`）
 - 接口 URL（如 `mtop.damai.buy.order.create`）仅作参考起点，**实施时必须真机/模拟器抓包确认当前版本号与请求体结构**，payload 模板化、版本号配置化
 - 滑块验证不做自动化绕过：触发后截图推送到手机，人工辅助完成
-- 多账号场景：每账号独立浏览器上下文 + 独立住宅代理，各账号启动时间随机偏移 0-200ms
+- **健壮性**：页面/浏览器被手动关闭时必须干净退出——`order.create_order` 重试循环检测 `page.is_closed()` 提前终止，`browser_session` 的 `browser.close()`/`playwright.stop()` 包 try/except，不刷垃圾日志不崩溃
 - 时间同步：对接阿里云 NTP（`ntp.aliyun.com`），抢票前校验系统时钟
 - 单账号控制 QPS，不盲目并发；随机化请求间隔
+- 配置类带类型注解（`Optional[str]`/`int` 等），保持 pyright/basedpyright 干净
 
 ### 法律红线（不可违反）
 
@@ -134,7 +142,7 @@ damai/
   - `python -m compileall -q <模块目录>` 做字节码编译（能抓出 SyntaxError，`ast.parse` 不够，`ast.parse` 无法发现的污染也可能混入）
   - `python -m <模块>.main --help`（或 `python main.py`）确认入口能正常启动到配置校验阶段
   - `python -c "import <模块>.core.<改动文件>"` 确认改动的模块能被实际 import（延迟 import 的模块要显式验证）
-- **入口用法**：damai 模块必须用 `python -m damai.main <login|grab>`（相对导入依赖 `-m`），**禁止**直接 `python damai/main.py`
+- **入口用法**：damai 模块必须用 `python -m damai.main <login|reserve|grab>`（相对导入依赖 `-m`），**禁止**直接 `python damai/main.py`
 - **大改动（重构、重命名、模块拆分、逻辑调整）后必须运行验证**：至少执行上述编译级验证，确认能正常启动（到达配置校验阶段）并检查关键路径无报错；无法本地运行时必须说明原因
 - 绝不提交真实 `access_token`、cookie、storage_state 等凭证到仓库（`.env` 与登录态文件必须被 git 忽略）
 
