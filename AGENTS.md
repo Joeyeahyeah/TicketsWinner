@@ -28,6 +28,8 @@ TicketsWinner/
     ├── main.py              # 入口：argparse 子命令 login / grab
     ├── config.py            # DamaiConfig（读取 damai/.env，与小程序模块分离）
     ├── .env.example         # damai 环境变量模板
+    ├── docs/
+    │   └── packet_capture.md    # 真机/模拟器抓包指引（字段清单 + 记录模板）
     ├── browser/
     │   ├── browser_manager.py   # Playwright 浏览器管理（加载 storage_state）
     │   ├── login.py             # 扫码登录 + storage_state 持久化
@@ -35,7 +37,7 @@ TicketsWinner/
     └── core/
         ├── scheduler.py         # NTP 校时（ntp.aliyun.com）+ 精确等待
         ├── notify.py            # Server酱推送（文本 + 滑块截图）
-        └── order.py             # 下单流程（占位，待真机抓包确认后实现）
+        └── order.py             # 下单流程（页面 JS 环境调用 mtop SDK + 滑块处理）
 ```
 
 ## WeixinMiniApp 模块（weixin_mini_app/）
@@ -85,15 +87,17 @@ damai/
 ├── core/
 │   ├── scheduler.py         # NTP 校时 + 开抢时间精确等待
 │   ├── notify.py            # 成功通知（Server酱推送）
-│   └── order.py             # 下单流程（占位，待抓包实现）
+│   └── order.py             # 下单流程（页面 JS 调用 mtop SDK + 滑块处理）
+├── docs/
+│   └── packet_capture.md    # 抓包指引（字段清单 + 记录模板）
 ├── config.py                # 配置（读 damai/.env，与小程序模块分离）
 └── .env.example
 ```
 
 ### 当前状态与下一步
 
-- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知
-- 待实现：`core/order.py` 下单链路 —— 真机/模拟器抓包确认 `mtop.damai.buy.order.create` 版本号（填 `DAMAI_API_VERSION`）与请求体后实现；滑块检测选择器也需抓包后补充
+- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知、`core/order.py` 下单链路（页面 JS 环境调用 mtop SDK 发起 `mtop.damai.buy.order.create`，含随机间隔重试、响应状态机、滑块检测/截图/推送/人工等待）
+- 待真机验证：按 `docs/packet_capture.md` 抓包获取下单接口版本号（填 `DAMAI_API_VERSION`）与请求体、`SKU_ID`、`BUYER_IDS`、滑块选择器，回填 `damai/.env` 后在真实场次验证；`order.py` 中响应状态判定关键字与滑块选择器以实际抓包为准微调
 - 运行入口：`python -m damai.main login` / `python -m damai.main grab`（浏览器二进制需先 `playwright install chromium`）
 
 ### 关键约定

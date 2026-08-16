@@ -145,7 +145,7 @@ python main.py
 
 ## Damai 模块（feature/damai 分支）
 
-大麦网演唱会门票抢票，采用 **Playwright + 大麦 H5 页面**方案：由页面内 JS 环境自动生成 mtop 签名，避免逆向阿里签名算法。当前为「骨架 + 登录态」阶段，下单链路待真机抓包确认接口版本号与请求体后实现（见 `damai/core/order.py` 占位说明）。
+大麦网演唱会门票抢票，采用 **Playwright + 大麦 H5 页面**方案：由页面内 JS 环境自动生成 mtop 签名，避免逆向阿里签名算法。已实现「骨架 + 登录态 + 下单链路」，下单通过页面 `window.mtop` SDK 发起 `mtop.damai.buy.order.create`（版本号与请求体模板化配置）。
 
 ### 环境安装
 
@@ -156,7 +156,7 @@ playwright install chromium
 
 ### 使用流程
 
-1. **配置** `damai/.env`（参考 `damai/.env.example`）：填写 `DAMAI_ITEM_URL`（演出详情页）、`SALE_START_TIME`，可选 `SERVERCHAN_SENDKEY`（Server酱微信推送）
+1. **配置** `damai/.env`（参考 `damai/.env.example`）：填写 `DAMAI_ITEM_URL`（演出详情页）、`SALE_START_TIME`，下单相关 `DAMAI_API_VERSION` / `SKU_ID` / `BUYER_IDS`（均需真机抓包确认，见下方抓包指引），可选 `SERVERCHAN_SENDKEY`（Server酱微信推送）
 2. **扫码登录**（建议抢票前一天执行）：
 
    ```powershell
@@ -170,7 +170,11 @@ playwright install chromium
    python -m damai.main grab
    ```
 
-   流程：NTP 校时（ntp.aliyun.com）→ 加载登录态 → 打开详情页 → 精确等待开抢时间 → 下单（当前为占位，仅走到开抢时间）
+   流程：NTP 校时（ntp.aliyun.com）→ 加载登录态 → 打开详情页 → 精确等待开抢时间 → 页面 JS 环境调用 mtop 下单（触发滑块时截图推送手机等待人工处理）
+
+### 抓包指引
+
+下单接口 `mtop.damai.buy.order.create` 的版本号与请求体、`skuId` 前置接口、滑块 DOM 选择器均需真机/模拟器抓包确认，详见 [`damai/docs/packet_capture.md`](damai/docs/packet_capture.md)。抓包完成后将结果回填到 `damai/.env`，无需改动代码。
 
 ### 注意事项
 
@@ -180,7 +184,7 @@ playwright install chromium
 
 ## 后续规划
 
-- **Damai 模块下单链路**：真机/模拟器抓包确认 `mtop.damai.buy.order.create` 版本号与请求体后，在 `damai/core/order.py` 实现，详见 `AGENTS.md`
+- **Damai 模块真机验证**：按抓包指引获取 `mtop.damai.buy.order.create` 版本号与请求体、`skuId`、滑块选择器，回填 `damai/.env` 后在真实场次验证下单链路（滑块选择器与响应状态判定字段需以实际抓包为准微调）
 
 > 成功率公式：**脚本质量(40%) + 网络延迟(30%) + 时间控制(20%) + 运气(10%)**
 > 建议首次抢票用非热门场次测试，熟悉流程后再抢热门场次。
