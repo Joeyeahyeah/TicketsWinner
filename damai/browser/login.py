@@ -25,7 +25,7 @@ def login(config: DamaiConfig = DamaiConfig) -> bool:
 
     with browser_session(config, use_storage_state=False, headless=False) as context:
         page = context.new_page()
-        page.goto(LOGIN_URL, timeout=int(config.REQUEST_TIMEOUT * 10000))
+        page.goto(LOGIN_URL, timeout=config.PAGE_LOAD_TIMEOUT * 1000)
         print('请在打开的浏览器窗口中扫码登录大麦账号...')
 
         deadline = time.time() + config.LOGIN_TIMEOUT
