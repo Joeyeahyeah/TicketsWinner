@@ -1,36 +1,29 @@
-import requests
-import time
+import logging
 import random
+import time
+
+import requests
+
 from config import Config
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger('tickets')
 
-# -------- 请求1. 获取front-trace-id --------
-# 已经转移到config.py中
-# def base36(num):
-#     alphabet = string.digits + string.ascii_lowercase
-#     if num == 0:
-#         return alphabet[0]
-#     base36 = ''
-#     while num:
-#         num, i = divmod(num, 36)
-#         base36 = alphabet[i] + base36
-#     return base36
-#
-#
-# def get_front_trace_id():
-#     timestamp = int(time.time() * 1000)
-#     timestamp_base36 = base36(timestamp)
-#     random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=11))
-#     return timestamp_base36 + random_str
-# 已经转移到config.py中
-# -------- 请求1. 获取front-trace-id --------
+BASE_URL = 'https://65373d6e95c3170001074c57.caiyicloud.com'
+MERCHANT_ID = '65373d6e95c3170001074c57'
+USER_AGENT = ('Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) '
+              'AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 '
+              'MicroMessenger/8.0.53(0x1800352e) NetType/4G Language/zh_CN')
+
+RETRYABLE_COMMENTS = {"正在为您自动尝试", "该演出还未开售"}
 
 
-# -------- 请求2. 获取抢票预填信息 --------
-# 添加ver参数
-def get_prefilledlist(access_token, ver):
-    url = 'https://65373d6e95c3170001074c57.caiyicloud.com/cyy_gatewayapi/show/buyer/v3/pre_filed_info/676d5b8c3958580001b70179'
-    headers = {
+def build_headers(access_token: str, ver: str) -> dict:
+    return {
         "Host": "65373d6e95c3170001074c57.caiyicloud.com",
         "Connection": "keep-alive",
         "terminal-src": "WEIXIN_MINI",
@@ -38,173 +31,184 @@ def get_prefilledlist(access_token, ver):
         "src": "weixin_mini",
         "ver": ver,
         "access-token": access_token,
-        "merchant-id": "65373d6e95c3170001074c57",
+        "merchant-id": MERCHANT_ID,
         "front-trace-id": Config.get_front_trace_id(),
         "Accept-Encoding": "gzip,compress,br,deflate",
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/4G Language/zh_CN",
-        "Referer": f"https://servicewechat.com/{Config.APP_ID}/42/page-frame.html"
+        "User-Agent": USER_AGENT,
+        "Referer": f"https://servicewechat.com/{Config.APP_ID}/42/page-frame.html",
     }
+
+
+def get_prefilled_info(access_token: str, ver: str):
+    """获取抢票预填信息，返回关键 ID 五元组"""
+    url = f'{BASE_URL}/cyy_gatewayapi/show/buyer/v3/pre_filed_info/676d5b8c3958580001b70179'
     params = {
         "needDetails": "true",
         "source": "FROM_SHOW_DETAIL_PRE_FILED",
         "src": "weixin_mini",
-        "merchantId": "65373d6e95c3170001074c57",
+        "merchantId": MERCHANT_ID,
         "ver": ver,
-        "appId": Config.APP_ID
+        "appId": Config.APP_ID,
     }
-    # 使用正确的GET参数传递方式
-    res = requests.get(url=url, headers=headers, params=params)
     try:
-        prefilledlist = res.json()['data']
-        return (
-            prefilledlist['preFiledId'],
-            prefilledlist['userAudienceIds'][0],
-            prefilledlist['bizSeatPlanId'],
-            prefilledlist['bizShowId'],
-            prefilledlist['bizShowSessionId']
+        res = requests.get(
+            url=url,
+            headers=build_headers(access_token, ver),
+            params=params,
+            timeout=Config.REQUEST_TIMEOUT,
         )
-    except:
-        print("获取预填信息失败，请检查网络或参数")
-        return None, None, None, None, None
+        data = res.json()['data']
+        return (
+            data['preFiledId'],
+            data['userAudienceIds'][0],
+            data['bizSeatPlanId'],
+            data['bizShowId'],
+            data['bizShowSessionId'],
+        )
+    except requests.RequestException as e:
+        logger.error("获取预填信息网络异常: %s", e)
+    except (KeyError, ValueError) as e:
+        logger.error("解析预填信息失败: %s", e)
+        logger.error("响应内容: %s", getattr(res, 'text', '')[:300])
+    return None
 
 
-# -------- 请求2. 获取抢票预填信息 --------
-
-# -------- 请求3. 获取抢票信息 --------
-def get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId, skuId, showId, sessionId, access_token,
-               ticketItems_id):
-    url = 'https://65373d6e95c3170001074c57.caiyicloud.com/cyy_gatewayapi/trade/buyer/order/v5/create_order'
-    headers = {
-        "Host": "65373d6e95c3170001074c57.caiyicloud.com",
-        "Connection": "keep-alive",
-        "terminal-src": "WEIXIN_MINI",
-        "content-type": "application/json",
-        "src": "weixin_mini",
-        "ver": ver,
-        "access-token": access_token,
-        "merchant-id": "65373d6e95c3170001074c57",
-        "front-trace-id": Config.get_front_trace_id(),
-        "Accept-Encoding": "gzip,compress,br,deflate",
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.53(0x1800352e) NetType/4G Language/zh_CN",
-        "Referer": f"https://servicewechat.com/{Config.APP_ID}/42/page-frame.html"
-    }
-    data = {
-        "locationParam": {"bsCityId": bsCityId, "locationCityId": locationCityId},
-        "preFiledId": preFiledId,
+def build_order_payload(cfg: Config, bs_city_id, location_city_id, pre_filed_id,
+                        audience_id, sku_id, show_id, session_id, ticket_items_id) -> dict:
+    price = cfg.TICKET_PRICE
+    return {
+        "locationParam": {"bsCityId": bs_city_id, "locationCityId": location_city_id},
+        "preFiledId": pre_filed_id,
         "priceItemParam": [{
             "applyTickets": [],
             "priceItemType": "TICKET_FEE",
             "priceItemSpecies": "SEAT_PLAN",
-            "priceItemVal": "280.00",
-            "priceDisplay": "￥280",
+            "priceItemVal": price,
+            "priceDisplay": cfg.PRICE_DISPLAY,
             "priceItemName": "票款总额",
-            "direction": "INCREASE"
+            "direction": "INCREASE",
         }],
-        "merchantId": "65373d6e95c3170001074c57",
+        "merchantId": MERCHANT_ID,
         "src": "weixin_mini",
-        "appId": Config.APP_ID,
+        "appId": cfg.APP_ID,
         "priorityId": "",
         "orderSource": "COMMON",
         "addressParam": {},
         "many2OneAudience": {},
-        "ver": ver,
+        "ver": cfg.VER,
         "items": [{
             "sku": {
-                "ticketItems": [{"id": ticketItems_id, "audienceId": audienceId}],
-                "ticketPrice": "280.00",
-                "skuId": skuId,
+                "ticketItems": [{"id": ticket_items_id, "audienceId": audience_id}],
+                "ticketPrice": price,
+                "skuId": sku_id,
                 "qty": 1,
-                "skuType": "SINGLE"
+                "skuType": "SINGLE",
             },
             "spu": {
                 "addPromoVersionHash": "EMPTY_PROMOTION_HASH",
                 "promotionVersionHash": "EMPTY_PROMOTION_HASH",
-                "showId": showId,
-                "sessionId": sessionId
+                "showId": show_id,
+                "sessionId": session_id,
             },
-            "deliverMethod": "E_TICKET"
+            "deliverMethod": "E_TICKET",
         }],
-        "paymentParam": {
-            "totalAmount": "280.00",
-            "payAmount": "280.00"
-        },
-        "addPurchasePromotionId": ""
+        "paymentParam": {"totalAmount": price, "payAmount": price},
+        "addPurchasePromotionId": "",
     }
-    # 返回抢票信息
-    print(f"请求抢票信息: {data}")
-    return requests.post(url=url, headers=headers, json=data)
 
 
-# -------- 请求3. 获取抢票信息 --------
-
-# -------- !!!!!!!! 抢票 !!!!!!!! --------
-def run():
-    print('>>>>>程序已启动>>>>>')
-
-    # 添加ver参数
-    preFiledId, audienceId, skuId, showId, sessionId = get_prefilledlist(
-        Config.ACCESS_TOKEN,
-        Config.VER
+def create_order(payload: dict, access_token: str, ver: str):
+    """创建订单（抢票）"""
+    url = f'{BASE_URL}/cyy_gatewayapi/trade/buyer/order/v5/create_order'
+    return requests.post(
+        url=url,
+        headers=build_headers(access_token, ver),
+        json=payload,
+        timeout=Config.REQUEST_TIMEOUT,
     )
 
-    if not all([preFiledId, audienceId, skuId, showId, sessionId]):
-        print(">>>>>获取预填信息失败，程序退出！>>>>>")
+
+def generate_ticket_items_id() -> str:
+    """生成 ticketItems_id：时间戳+随机偏移 拼接固定后缀，
+    模拟客户端真实 ID 生成模式（后缀 100000008 对应该场次票档，换场次需抓包确认）"""
+    return f"{int(time.time() * 1000) + random.randint(50, 80)}100000008"
+
+
+def wait_until(target_time: float):
+    """精确等待到目标时间，动态缩短睡眠间隔"""
+    while True:
+        remaining = target_time - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.1, remaining))
+
+
+def run(cfg: Config):
+    logger.info('>>>>> 程序已启动 >>>>>')
+    cfg.validate()
+
+    pre_info = get_prefilled_info(cfg.ACCESS_TOKEN, cfg.VER)
+    if not pre_info:
+        logger.error('>>>>> 获取预填信息失败，程序退出 >>>>>')
         return
 
-    print(
-        f'>>>>>获取预填信息成功>>>>>\npreFiledId: {preFiledId} >>> audienceId: {audienceId}>>>skuId: {skuId}>>>showId: {showId}>>>sessionId: {sessionId}>>>')
+    pre_filed_id, audience_id, sku_id, show_id, session_id = pre_info
+    logger.info('>>>>> 获取预填信息成功 >>>>>')
+    logger.info('preFiledId=%s audienceId=%s skuId=%s showId=%s sessionId=%s',
+                pre_filed_id, audience_id, sku_id, show_id, session_id)
 
-    # 精确时间控制
     today = time.strftime('%Y-%m-%d', time.localtime())
-    target_time = time.mktime(time.strptime(f"{today} {start_time}", '%Y-%m-%d %H:%M:%S'))
-    print(f"等待开抢时间: {today} {start_time}")
+    target_time = time.mktime(time.strptime(f"{today} {cfg.START_TIME}", '%Y-%m-%d %H:%M:%S'))
+    logger.info('等待开抢时间: %s %s', today, cfg.START_TIME)
+    wait_until(target_time)
+    logger.info('任务启动时间: %s', time.strftime('%Y-%m-%d %H:%M:%S', time.localtime()))
 
-    while True:
-        current_time = time.time()
-        if current_time >= target_time:
-            print(f'任务启动时间: {time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}')
-            break
-        # 动态调整等待时间
-        sleep_time = min(0.1, target_time - current_time)
-        if sleep_time > 0:
-            time.sleep(sleep_time)
+    ticket_items_id = generate_ticket_items_id()
+    payload = build_order_payload(
+        cfg, cfg.BS_CITY_ID, cfg.LOCATION_CITY_ID,
+        pre_filed_id, audience_id, sku_id, show_id, session_id, ticket_items_id,
+    )
 
-    # 生成ticketItems_id
-    ticketItems_id = f"{int(time.time() * 1000) + random.randint(50, 80)}100000008"
-
-    requests_times = 0
-    while requests_times < max_requests_times:
+    for attempt in range(1, cfg.MAX_REQUESTS + 1):
         try:
-            requests_times += 1
-            res = get_ticket(ver, bsCityId, locationCityId, preFiledId, audienceId,
-                             skuId, showId, sessionId, access_token, ticketItems_id)
+            start = time.monotonic()
+            res = create_order(payload, cfg.ACCESS_TOKEN, cfg.VER)
+            elapsed_ms = (time.monotonic() - start) * 1000
 
-            print(
-                f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())} >>> 请求次数: {requests_times} >>> {res.text[:100]}...")
+            try:
+                res_json = res.json()
+                comments = res_json.get("comments", "")
+            except ValueError:
+                logger.warning('请求%d 非JSON响应 status=%d: %s',
+                               attempt, res.status_code, res.text[:100])
+                time.sleep(random.uniform(cfg.RETRY_INTERVAL_MIN, cfg.RETRY_INTERVAL_MAX))
+                continue
 
-            res_json = res.json()
-            if res_json.get("comments") in ["正在为您自动尝试", "该演出还未开售"]:
-                time.sleep(0.3)  # 减少等待时间
-            elif res_json.get("comments") == "成功":
-                print(">>>>>>抢票成功！请尽快到手机端付款！<<<<<<")
-                break
-        except Exception as e:
-            print(f'请求出错: {e}')
-            time.sleep(0.5)  # 出错后短暂等待
+            logger.info('请求%d status=%d %.0fms comments=%s',
+                        attempt, res.status_code, elapsed_ms, comments)
 
-    if requests_times >= max_requests_times:
-        print('超过最大请求次数，程序退出！')
+            if comments == "成功":
+                logger.info('>>>>>> 抢票成功！请尽快到手机端付款！<<<<<<')
+                return
+            if comments not in RETRYABLE_COMMENTS:
+                logger.warning('未知提示: %s 响应: %s', comments, res.text[:200])
 
+            time.sleep(random.uniform(cfg.RETRY_INTERVAL_MIN, cfg.RETRY_INTERVAL_MAX))
+        except requests.RequestException as e:
+            logger.error('请求%d 出错: %s', attempt, e)
+            time.sleep(0.5)
+        except KeyboardInterrupt:
+            logger.warning('收到键盘中断(Ctrl+C)，已停止抢票（第 %d 次请求后）', attempt)
+            raise
 
-# -------- !!!!!!!! 抢票 !!!!!!!! --------
+    logger.warning('超过最大请求次数(%d)，程序退出！', cfg.MAX_REQUESTS)
+
 
 if __name__ == '__main__':
-    # 配置参数
-    start_time = Config.START_TIME  # 抢票开始时间
-    ver = Config.VER  # 当前版本
-    bsCityId = Config.BS_CITY_ID  # 省份ID
-    locationCityId = Config.LOCATION_CITY_ID  # 城市ID
-    access_token = Config.ACCESS_TOKEN  # 当前版本
-    max_requests_times = Config.MAX_REQUESTS  # 最大请求次数
-    # 启动抢票
-    run()
+    try:
+        run(Config)
+    except KeyboardInterrupt:
+        print('\n已手动终止程序。')
+    except ValueError as e:
+        logger.error('启动失败: %s', e)
+        raise SystemExit(1)
