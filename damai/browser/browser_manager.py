@@ -2,6 +2,7 @@
 import logging
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Type
 
 from playwright.sync_api import sync_playwright
 
@@ -12,7 +13,7 @@ logger = logging.getLogger('damai.browser')
 
 
 @contextmanager
-def browser_session(config: DamaiConfig = DamaiConfig, use_storage_state: bool = True,
+def browser_session(config: Type[DamaiConfig] = DamaiConfig, use_storage_state: bool = True,
                     headless: bool = None):
     """浏览器会话上下文管理器，确保异常/中断时释放资源。
 

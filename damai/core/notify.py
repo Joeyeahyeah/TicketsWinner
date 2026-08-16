@@ -5,6 +5,7 @@
 import base64
 import logging
 from pathlib import Path
+from typing import Optional
 
 import requests
 
@@ -24,8 +25,8 @@ def _post(sendkey: str, data: dict, timeout: float) -> None:
         logger.error('Server酱推送失败: %s', e)
 
 
-def send_text(sendkey: str, title: str, content: str = '', timeout: float = 3) -> None:
-    """发送文本通知（content 支持 markdown）"""
+def send_text(sendkey: Optional[str], title: str, content: str = '', timeout: float = 3) -> None:
+    """发送文本通知（content 支持 markdown）；sendkey 为空时跳过并告警"""
     if not sendkey:
         logger.warning('未配置 SERVERCHAN_SENDKEY，跳过推送: %s', title)
         return

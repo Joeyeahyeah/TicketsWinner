@@ -33,6 +33,8 @@ def cmd_login() -> int:
 def cmd_reserve() -> int:
     """开抢前预约抢票：选票档/数量/观演人并提交抢票预约，保存预约状态。"""
     DamaiConfig.validate_reserve()
+    item_url = DamaiConfig.ITEM_URL
+    assert item_url, 'validate_reserve 已校验 ITEM_URL 非空'
 
     from .browser.browser_manager import browser_session
     from .core import reserve
@@ -40,9 +42,8 @@ def cmd_reserve() -> int:
     # 预约需用户在场观察页面交互，强制有头
     with browser_session(DamaiConfig, headless=False) as context:
         page = context.new_page()
-        logger.info('打开演出详情页: %s', DamaiConfig.ITEM_URL)
-        page.goto(DamaiConfig.ITEM_URL,
-                  timeout=DamaiConfig.PAGE_LOAD_TIMEOUT * 1000)
+        logger.info('打开演出详情页: %s', item_url)
+        page.goto(item_url, timeout=DamaiConfig.PAGE_LOAD_TIMEOUT * 1000)
 
         ok = reserve.submit_reserve(page, DamaiConfig)
         if ok:
@@ -112,6 +113,8 @@ def _prefetch_sku_before_start(page, config) -> None:
 
 def cmd_grab() -> int:
     DamaiConfig.validate()
+    item_url = DamaiConfig.ITEM_URL
+    assert item_url, 'validate 已校验 ITEM_URL 非空'
 
     from .browser.browser_manager import browser_session
     from .core import notify, order, scheduler
@@ -121,10 +124,8 @@ def cmd_grab() -> int:
 
     with browser_session(DamaiConfig) as context:
         page = context.new_page()
-        logger.info('打开演出详情页: %s', DamaiConfig.ITEM_URL)
-        # 修正: 原 REQUEST_TIMEOUT*10000 是 30 秒疑似笔误，改用 PAGE_LOAD_TIMEOUT
-        page.goto(DamaiConfig.ITEM_URL,
-                  timeout=DamaiConfig.PAGE_LOAD_TIMEOUT * 1000)
+        logger.info('打开演出详情页: %s', item_url)
+        page.goto(item_url, timeout=DamaiConfig.PAGE_LOAD_TIMEOUT * 1000)
 
         # 开抢前 N 秒进入预取阶段：走预约入口预取真实 skuId/buyerIds
         prefetch_at = target_ts - DamaiConfig.GET_SKU_BEFORE_START

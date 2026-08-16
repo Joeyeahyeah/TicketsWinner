@@ -5,6 +5,7 @@
 import logging
 import time
 from pathlib import Path
+from typing import Type
 
 from ..config import DamaiConfig
 from .browser_manager import browser_session
@@ -18,7 +19,7 @@ LOGIN_URL = 'https://passport.damai.cn/login'
 AUTH_COOKIE_NAMES = {'cookie2', '_nk_', 'munb'}
 
 
-def login(config: DamaiConfig = DamaiConfig) -> bool:
+def login(config: Type[DamaiConfig] = DamaiConfig) -> bool:
     """打开登录页等待用户扫码，登录成功后保存 storage_state"""
     storage_path = Path(config.STORAGE_STATE_PATH)
     storage_path.parent.mkdir(parents=True, exist_ok=True)
