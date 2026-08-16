@@ -40,6 +40,14 @@ def browser_session(config: DamaiConfig = DamaiConfig, use_storage_state: bool =
         apply_stealth(context)
         yield context
     finally:
-        if browser is not None:
-            browser.close()
-        playwright.stop()
+        # 浏览器可能已被手动关闭（TargetClosedError）或连接已断开，
+        # 清理动作不应再抛异常掩盖主流程的退出
+        try:
+            if browser is not None and browser.is_connected():
+                browser.close()
+        except Exception as e:  # noqa: BLE001 - 清理阶段的异常降级为告警
+            logger.warning('关闭浏览器异常（可忽略）: %s', e)
+        try:
+            playwright.stop()
+        except Exception as e:  # noqa: BLE001
+            logger.warning('停止 playwright 异常（可忽略）: %s', e)

@@ -98,7 +98,9 @@ def _resolve_sku_id(page, config) -> str:
 
 def _detect_slider(page) -> bool:
     """按配置化选择器检测滑块是否出现。"""
-    selectors = page and getattr(page, '_slider_selectors', None)
+    if not page or page.is_closed():
+        return False
+    selectors = getattr(page, '_slider_selectors', None)
     # 选择器由调用方通过 create_order 注入到 page 上，或从 config 读取
     if not selectors:
         return False
@@ -186,6 +188,11 @@ def create_order(page, config):
                 config.API_VERSION, payload.get('itemId'), payload.get('skuId'))
 
     for attempt in range(1, config.MAX_ATTEMPTS + 1):
+        # 页面/浏览器被关闭（如手动关闭）时立即退出，避免刷垃圾重试日志
+        if page.is_closed():
+            logger.warning('页面已关闭，终止下单流程')
+            return None
+
         # 每次重试前检测滑块（人工处理过程中可能触发）
         if _detect_slider(page):
             _handle_slider(page, config)
@@ -197,6 +204,10 @@ def create_order(page, config):
             logger.info('下单请求%d 耗时 %.0fms 响应: %s',
                         attempt, elapsed_ms, json.dumps(response, ensure_ascii=False)[:200])
         except Exception as e:  # noqa: BLE001 - 页面 JS/网络异常均需重试
+            # 页面在执行过程中被关闭（TargetClosedError 等），终止而非继续重试
+            if page.is_closed():
+                logger.warning('页面已关闭，终止下单流程')
+                return None
             logger.warning('下单请求%d 出错: %s', attempt, e)
             time.sleep(random.uniform(config.RETRY_INTERVAL_MIN, config.RETRY_INTERVAL_MAX))
             continue
