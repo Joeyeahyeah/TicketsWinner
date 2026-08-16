@@ -121,8 +121,12 @@ damai/
 
 - 使用 conventional commits：`feat`、`fix`、`refactor`、`docs`
 - 分支说明：`develop` 维护 WeixinMiniApp 模块；Damai 模块在独立功能分支开发
-- 提交前确保 `python main.py`（或对应模块入口）能正常启动，不引入语法/导入错误
-- **大改动（重构、重命名、模块拆分、逻辑调整）后必须运行验证**：至少执行 `python main.py` 确认能正常启动（到达「获取预填信息」或配置校验阶段），并检查关键路径无报错；无法本地运行时必须说明原因
+- **提交前必须做编译级验证（每个提交前都要跑，不是「改完跑一次就够」）**：
+  - `python -m compileall -q <模块目录>` 做字节码编译（能抓出 SyntaxError，`ast.parse` 不够，`ast.parse` 无法发现的污染也可能混入）
+  - `python -m <模块>.main --help`（或 `python main.py`）确认入口能正常启动到配置校验阶段
+  - `python -c "import <模块>.core.<改动文件>"` 确认改动的模块能被实际 import（延迟 import 的模块要显式验证）
+- **入口用法**：damai 模块必须用 `python -m damai.main <login|grab>`（相对导入依赖 `-m`），**禁止**直接 `python damai/main.py`
+- **大改动（重构、重命名、模块拆分、逻辑调整）后必须运行验证**：至少执行上述编译级验证，确认能正常启动（到达配置校验阶段）并检查关键路径无报错；无法本地运行时必须说明原因
 - 绝不提交真实 `access_token`、cookie、storage_state 等凭证到仓库（`.env` 与登录态文件必须被 git 忽略）
 
 ## 环境变量
