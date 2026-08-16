@@ -75,11 +75,11 @@ python main.py              # 输出「获取预填信息成功」即基础链�
 - 技术路线采用 **Playwright + 大麦 H5 页面**（由页面内 JS 环境自动生成 mtop 签名，避免逆向阿里签名算法）
 - 难点认知：mtop 签名（`x-sign`）本身可逆向，**真正的难点是阿里风控**（设备指纹、行为分析、滑块验证、IP 信誉）
 
-### 目录结构（已落地骨架 + 登录态）
+### 目录结构（已落地骨架 + 登录态 + 预约抢票机制）
 
 ```
 damai/
-├── main.py                  # 入口：login / grab 子命令
+├── main.py                  # 入口：login / reserve / grab 子命令
 ├── browser/
 │   ├── browser_manager.py   # Playwright 浏览器管理
 │   ├── login.py             # 登录态（扫码 + storage_state 持久化）
@@ -87,18 +87,27 @@ damai/
 ├── core/
 │   ├── scheduler.py         # NTP 校时 + 开抢时间精确等待
 │   ├── notify.py            # 成功通知（Server酱推送）
-│   └── order.py             # 下单流程（页面 JS 调用 mtop SDK + 滑块处理）
+│   ├── order.py             # 下单流程（页面 JS 调用 mtop SDK + 滑块处理）
+│   └── reserve.py           # 预约抢票流程（选票档/数量/观演人 → 提交抢票预约）
 ├── docs/
-│   └── packet_capture.md    # 抓包指引（字段清单 + 记录模板）
+│   └── packet_capture.md    # 抓包指引（字段清单 + 记录模板 + 预约相关 5.5 节）
 ├── config.py                # 配置（读 damai/.env，与小程序模块分离）
 └── .env.example
 ```
 
 ### 当前状态与下一步
 
-- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知、`core/order.py` 下单链路（页面 JS 环境调用 mtop SDK 发起 `mtop.damai.buy.order.create`，含随机间隔重试、响应状态机、滑块检测/截图/推送/人工等待）
-- 待真机验证：按 `docs/packet_capture.md` 抓包获取下单接口版本号（填 `DAMAI_API_VERSION`）与请求体、`SKU_ID`、`BUYER_IDS`、滑块选择器，回填 `damai/.env` 后在真实场次验证；`order.py` 中响应状态判定关键字与滑块选择器以实际抓包为准微调
-- 运行入口：`python -m damai.main login` / `python -m damai.main grab`（浏览器二进制需先 `playwright install chromium`）
+- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知、`core/order.py` 下单链路（页面 JS 环境调用 mtop SDK 发起 `mtop.damai.buy.order.create`，含随机间隔重试、响应状态机、滑块检测/截图/推送/人工等待）、`core/reserve.py` 预约抢票流程（选票档/数量/观演人 → 提交抢票预约 → 探测 skuId 写入本地缓存）、`main.py` grab 流程开抢前预取阶段（走预约入口进入确认订单页预取真实 skuId/buyerIds，开抢瞬间直跳下单）
+- 待真机验证：按 `docs/packet_capture.md` 抓包获取下单接口版本号（填 `DAMAI_API_VERSION`）与请求体、`SKU_ID`、`BUYER_IDS`、滑块选择器、预约入口/立即抢票按钮选择器（5.5 节）、确认订单页 mtop 验证，回填 `damai/.env` 后在真实场次验证；`order.py` 中响应状态判定关键字与滑块选择器以实际抓包为准微调
+- 运行入口：`python -m damai.main login` / `python -m damai.main reserve` / `python -m damai.main grab`（浏览器二进制需先 `playwright install chromium`）
+
+### 预约抢票机制（大麦开抢前业务现状）
+
+- 大麦开抢前详情页主按钮文案为「预约抢票」而非「立即购买」，用户需提前预约想看的票档/数量
+- 倒计时归零时按钮变为「立即抢票」，点击后自动勾选已预约内容直跳确认订单页，跳过逐项选择
+- `reserve` 子命令：抢票前一天/几小时执行，选票档/数量/观演人并提交抢票预约，把 skuId/buyerIds 写入 `RESERVE_STATE_PATH`
+- `grab` 流程在开抢前 `GET_SKU_BEFORE_START`（默认 5）秒进入预取阶段：走预约入口进入确认订单页，优先读 `reserve_state.json` 本地缓存，页面预取作为兜底，预取到的值回填 config 实例属性供 `order.create_order` 复用
+- `order.create_order` 明确要求传入的 page 必须是「确认订单页」（`window.mtop` SDK 仅在确认订单页存在，详情页调用 `_submit_once` 会失败）；`_resolve_sku_id` 优先从确认订单页上下文取，详情页作为兜底
 
 ### 关键约定
 
