@@ -50,16 +50,29 @@ def _build_payload(config) -> dict:
 
 
 def _resolve_sku_id(page, config) -> str:
-    """开抢前从详情页运行时解析 skuId（config.SKU_ID 为空时的兜底）。
+    """运行时解析 skuId（config.SKU_ID 为空时的兜底）。
 
-    大麦页面通常把商品/票档信息挂在 window 全局或 __INITIAL_STATE__ 中，
-    具体字段名以抓包为准；此处按常见结构探测，失败返回空串。
+    优先从「确认订单页」上下文取（window.mtop 所在页面，skuId 挂载更可靠）；
+    详情页 __INITIAL_STATE__ 作为兜底（开抢瞬间页面 JS 可能尚未挂载，不可靠）。
+
+    注意：大麦 window.mtop SDK 仅存在于「确认订单页」而非详情页，
+    grab 流程应在开抢前 N 秒通过预约入口进入确认订单页（见 main._prefetch_sku_before_start），
+    然后再调用 create_order，本函数才能命中确认订单页上下文。
     """
     if config.SKU_ID:
         return config.SKU_ID
     try:
         sku_id = page.evaluate("""
             () => {
+                // 优先：确认订单页的订单上下文（具体字段名以抓包为准）
+                const orderCtx = window.__ORDER_CONTEXT__ || window.__orderInfo__
+                    || (window.g_config && window.g_config.orderInfo);
+                if (orderCtx) {
+                    const s = JSON.stringify(orderCtx);
+                    const m = s.match(/"skuId"\\s*:\\s*"?([0-9]+)"?/);
+                    if (m) return m[1];
+                }
+                // 兜底：详情页/通用全局
                 const candidates = [
                     window.__INITIAL_STATE__,
                     window.__NUXT__,
@@ -152,7 +165,10 @@ def _submit_once(page, config, payload: dict):
 def create_order(page, config):
     """下单主流程。
 
-    :param page: 已加载登录态、已打开演出详情页的 Playwright Page
+    :param page: 已加载登录态的 Playwright Page。**必须已处于「确认订单页」**
+        （window.mtop SDK 仅在确认订单页存在，详情页调用 _submit_once 会因
+        window.mtop.request 不存在而失败）。grab 流程通过预约入口进入确认订单页
+        后再调用本函数（见 main._prefetch_sku_before_start）。
     :param config: DamaiConfig
     :return: 下单成功返回订单信息 dict，失败返回 None
     """
