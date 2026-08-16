@@ -24,8 +24,18 @@ TicketsWinner/
 ├── requirements.txt
 ├── README.md
 ├── AGENTS.md                # 本文件
-└── damai/                   # Damai 抢票模块（新分支开发）
-    └── （规划中，见下方说明）
+└── damai/                   # Damai 抢票模块（feature/damai 分支）
+    ├── main.py              # 入口：argparse 子命令 login / grab
+    ├── config.py            # DamaiConfig（读取 damai/.env，与小程序模块分离）
+    ├── .env.example         # damai 环境变量模板
+    ├── browser/
+    │   ├── browser_manager.py   # Playwright 浏览器管理（加载 storage_state）
+    │   ├── login.py             # 扫码登录 + storage_state 持久化
+    │   └── stealth.py           # playwright-stealth 反指纹封装
+    └── core/
+        ├── scheduler.py         # NTP 校时（ntp.aliyun.com）+ 精确等待
+        ├── notify.py            # Server酱推送（文本 + 滑块截图）
+        └── order.py             # 下单流程（占位，待真机抓包确认后实现）
 ```
 
 ## WeixinMiniApp 模块（weixin_mini_app/）
@@ -63,21 +73,28 @@ python main.py              # 输出「获取预填信息成功」即基础链�
 - 技术路线采用 **Playwright + 大麦 H5 页面**（由页面内 JS 环境自动生成 mtop 签名，避免逆向阿里签名算法）
 - 难点认知：mtop 签名（`x-sign`）本身可逆向，**真正的难点是阿里风控**（设备指纹、行为分析、滑块验证、IP 信誉）
 
-### 规划中的目录结构
+### 目录结构（已落地骨架 + 登录态）
 
 ```
 damai/
-├── main.py                  # 入口：定时调度 + 抢票主流程
+├── main.py                  # 入口：login / grab 子命令
 ├── browser/
 │   ├── browser_manager.py   # Playwright 浏览器管理
 │   ├── login.py             # 登录态（扫码 + storage_state 持久化）
-│   └── stealth.py           # 反指纹检测（navigator.webdriver 等）
+│   └── stealth.py           # 反指纹检测（playwright-stealth 封装）
 ├── core/
-│   ├── scheduler.py         # 开抢时间精确等待
-│   └── notify.py            # 成功通知（Server酱/Bark 推送）
-├── config.py                # 配置（读 .env，与小程序模块分离）
+│   ├── scheduler.py         # NTP 校时 + 开抢时间精确等待
+│   ├── notify.py            # 成功通知（Server酱推送）
+│   └── order.py             # 下单流程（占位，待抓包实现）
+├── config.py                # 配置（读 damai/.env，与小程序模块分离）
 └── .env.example
 ```
+
+### 当前状态与下一步
+
+- 已完成：配置层、浏览器管理、扫码登录持久化、playwright-stealth 反指纹、NTP 校时定时调度、Server酱通知
+- 待实现：`core/order.py` 下单链路 —— 真机/模拟器抓包确认 `mtop.damai.buy.order.create` 版本号（填 `DAMAI_API_VERSION`）与请求体后实现；滑块检测选择器也需抓包后补充
+- 运行入口：`python -m damai.main login` / `python -m damai.main grab`（浏览器二进制需先 `playwright install chromium`）
 
 ### 关键约定
 

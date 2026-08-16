@@ -14,6 +14,12 @@ TicketsWinner/
 │   ├── config.py            # 配置类（读取 .env）
 │   └── grabber.py           # 抢票核心逻辑
 ├── .env.example             # 环境变量模板
+├── damai/                   # Damai 抢票模块（大麦网，Playwright + H5）
+│   ├── main.py              # 入口：login / grab 子命令
+│   ├── config.py            # DamaiConfig（读取 damai/.env）
+│   ├── .env.example         # damai 环境变量模板
+│   ├── browser/             # 浏览器管理 / 扫码登录 / 反指纹
+│   └── core/                # 定时调度 / Server酱通知 / 下单（占位）
 ├── requirements.txt         # 依赖
 ├── README.md
 └── AGENTS.md                # 开发指南（供编码代理参考）
@@ -137,9 +143,44 @@ python main.py
    - 系统代理未关闭导致请求经过 Whistle 出现 SSL 证书错误
    - 电脑进入睡眠模式
 
+## Damai 模块（feature/damai 分支）
+
+大麦网演唱会门票抢票，采用 **Playwright + 大麦 H5 页面**方案：由页面内 JS 环境自动生成 mtop 签名，避免逆向阿里签名算法。当前为「骨架 + 登录态」阶段，下单链路待真机抓包确认接口版本号与请求体后实现（见 `damai/core/order.py` 占位说明）。
+
+### 环境安装
+
+```powershell
+pip install -r requirements.txt
+playwright install chromium
+```
+
+### 使用流程
+
+1. **配置** `damai/.env`（参考 `damai/.env.example`）：填写 `DAMAI_ITEM_URL`（演出详情页）、`SALE_START_TIME`，可选 `SERVERCHAN_SENDKEY`（Server酱微信推送）
+2. **扫码登录**（建议抢票前一天执行）：
+
+   ```powershell
+   python -m damai.main login
+   ```
+
+   在打开的浏览器窗口中扫码登录，成功后登录态保存至 `damai/.auth/storage_state.json`（已 gitignore）
+3. **抢票**：
+
+   ```powershell
+   python -m damai.main grab
+   ```
+
+   流程：NTP 校时（ntp.aliyun.com）→ 加载登录态 → 打开详情页 → 精确等待开抢时间 → 下单（当前为占位，仅走到开抢时间）
+
+### 注意事项
+
+- 登录态含 cookie + localStorage，**绝不提交到仓库**
+- 触发滑块等风控时不做自动化绕过，截图经 Server酱 推送手机后人工辅助
+- 单账号控制 QPS，随机化请求间隔，降低风控触发概率
+
 ## 后续规划
 
-- **Damai 模块**（独立分支开发）：大麦网演唱会门票抢票，采用 Playwright + H5 方案，详见 `AGENTS.md`
+- **Damai 模块下单链路**：真机/模拟器抓包确认 `mtop.damai.buy.order.create` 版本号与请求体后，在 `damai/core/order.py` 实现，详见 `AGENTS.md`
 
 > 成功率公式：**脚本质量(40%) + 网络延迟(30%) + 时间控制(20%) + 运气(10%)**
 > 建议首次抢票用非热门场次测试，熟悉流程后再抢热门场次。
