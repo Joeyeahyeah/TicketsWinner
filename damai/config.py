@@ -51,6 +51,29 @@ class DamaiConfig:
     # 等待人工完成滑块的轮询超时（秒），避免无限阻塞
     SLIDER_WAIT_TIMEOUT = int(os.getenv("SLIDER_WAIT_TIMEOUT", 120))
 
+    # ---------- 预约抢票机制（开抢前预选票档/数量/观演人）----------
+    # 开抢前 N 秒进入「预取阶段」：走预约入口直跳确认订单页，预取真实 skuId/buyerIds 缓存
+    # 避免开抢瞬间才发现取不到 skuId（详情页 JS 可能尚未挂载）
+    GET_SKU_BEFORE_START = int(os.getenv("GET_SKU_BEFORE_START", 5))
+    # 页面加载超时（秒），原 REQUEST_TIMEOUT*10000 是 30 秒疑似笔误，独立配置更直观
+    PAGE_LOAD_TIMEOUT = int(os.getenv("PAGE_LOAD_TIMEOUT", 30))
+
+    # 预约入口/立即抢票按钮选择器（均待真机抓包确认，见 docs/packet_capture.md 第 5.5 节）
+    # 开抢前详情页主按钮文案为「预约抢票」，开抢后变为「立即抢票」
+    # 默认空串：强制抓包后填入，避免默认值导致 validate_reserve 校验形同虚设
+    RESERVE_SUBMIT_SELECTOR = os.getenv("RESERVE_SUBMIT_SELECTOR", "")
+    # 开抢后详情页主按钮（点击后会自动勾选已预约票档/数量，直跳确认订单页）
+    BUY_NOW_SELECTOR = os.getenv("BUY_NOW_SELECTOR", "")
+    # 预约时票档/数量/观演人选择器，逗号分隔（具体抓包后填）
+    RESERVE_SKU_SELECTOR = os.getenv("RESERVE_SKU_SELECTOR", "")
+    RESERVE_QTY_SELECTOR = os.getenv("RESERVE_QTY_SELECTOR", "")
+    RESERVE_BUYER_SELECTOR = os.getenv("RESERVE_BUYER_SELECTOR", "")
+
+    # 预约状态持久化（grab 预取阶段可优先读本地缓存，页面预取作为验证/兜底）
+    RESERVE_STATE_PATH = os.getenv(
+        "RESERVE_STATE_PATH",
+        str(DAMAI_DIR / '.auth' / 'reserve_state.json'))
+
     @classmethod
     def validate(cls):
         """抢票启动前校验必需配置"""
@@ -59,6 +82,18 @@ class DamaiConfig:
             missing.append("DAMAI_ITEM_URL")
         if missing:
             raise ValueError(f"缺少必需配置项: {', '.join(missing)}，请检查 damai/.env 文件")
+
+    @classmethod
+    def validate_reserve(cls):
+        """reserve 子命令校验：仅需详情页与预约入口选择器"""
+        missing = []
+        if not cls.ITEM_URL:
+            missing.append("DAMAI_ITEM_URL")
+        if not cls.RESERVE_SUBMIT_SELECTOR:
+            missing.append("RESERVE_SUBMIT_SELECTOR")
+        if missing:
+            raise ValueError(
+                f"预约缺少必需配置项: {', '.join(missing)}，请检查 damai/.env 文件")
 
     @classmethod
     def get_buyer_ids(cls):
