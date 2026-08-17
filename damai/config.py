@@ -12,7 +12,8 @@ class DamaiConfig:
     ITEM_URL: str | None = os.getenv("DAMAI_ITEM_URL")  # 演出详情页 URL
     SALE_START_TIME: str = os.getenv("SALE_START_TIME", "18:00:00")
 
-    # 大麦 mtop 接口版本号（占位，待真机抓包确认，见 core/order.py 与 docs/packet_capture.md）
+    # 大麦 mtop 下单接口名与版本号（抓包确认：接口名是 trade.order.create.h5）
+    ORDER_API: str = os.getenv("DAMAI_ORDER_API", "mtop.damai.trade.order.create.h5")
     API_VERSION: str = os.getenv("DAMAI_API_VERSION", "1.0")
 
     # 下单配置（票档 skuId 与观演人，均待真机抓包确认后填入 .env）
@@ -64,6 +65,8 @@ class DamaiConfig:
     RESERVE_SUBMIT_SELECTOR: str = os.getenv("RESERVE_SUBMIT_SELECTOR", "")
     # 开抢后详情页主按钮（点击后会自动勾选已预约票档/数量，直跳确认订单页）
     BUY_NOW_SELECTOR: str = os.getenv("BUY_NOW_SELECTOR", "")
+    # 确认订单页「提交订单」按钮选择器（order.create_order 点击它触发下单）
+    SUBMIT_ORDER_SELECTOR: str = os.getenv("SUBMIT_ORDER_SELECTOR", ".submit-btn, [class*=submit]")
     # 预约时票档/数量/观演人选择器，逗号分隔（具体抓包后填）
     RESERVE_SKU_SELECTOR: str = os.getenv("RESERVE_SKU_SELECTOR", "")
     RESERVE_QTY_SELECTOR: str = os.getenv("RESERVE_QTY_SELECTOR", "")

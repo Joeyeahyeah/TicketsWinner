@@ -1,17 +1,16 @@
-"""下单流程：在 H5 页面 JS 环境中调用 mtop SDK 发起下单请求。
+"""下单流程：拦截页面真实 mtop 请求实现下单。
 
-设计要点：
-- 接口: mtop.damai.buy.order.create（版本号走配置 DamaiConfig.API_VERSION，勿硬编码）
-- 签名: 由页面内 JS 环境（window.mtop）自动生成 mtop x-sign，
-        通过 page.evaluate 调用，不在 Python 侧逆向签名算法
+设计要点（抓包确认后的真实方案）：
+- 接口: mtop.damai.trade.order.create.h5（走配置 DamaiConfig.ORDER_API）
+- 请求体: 大麦 H5 确认订单页的组件状态树（含 signKey/submitref 等动态字段），
+          无法在 Python 侧构造，必须由页面自己生成
+- 下单方式: 用 page.route 拦截 mtop 请求，点击页面「提交订单」按钮触发，
+            拦截器捕获响应判断成功/失败
 - 风控: 触发滑块时截图 → Server酱推送 → 等待人工处理（不做自动化绕过）
-- 参数: payload 模板化，skuId / buyerIds 优先读配置，缺省时运行时从页面获取
 
 实现依赖真机/模拟器抓包确认（见 docs/packet_capture.md）：
-- 下单接口 mtop.damai.buy.order.create 的 v 版本号与完整请求体
-- 页面 mtop SDK 调用方式（window.mtop.request 签名）
+- 提交订单按钮选择器 SUBMIT_ORDER_SELECTOR（抓包后填入 .env）
 - 滑块触发时的 DOM 选择器
-以上字段均通过 DamaiConfig 配置化，抓包后填入 .env 即可，无需改代码。
 """
 import json
 import logging
@@ -22,7 +21,6 @@ from datetime import datetime
 logger = logging.getLogger('damai.core.order')
 
 # 成功/风控/可重试状态的判定关键字（响应字段以实际抓包为准，此处给默认值）
-RETRYABLE_KEYS = ('isv.', 'system', 'busy', 'fail', 'empty', 'sold', 'stock')
 
 
 def _extract_item_id(item_url: str) -> str:
@@ -35,73 +33,11 @@ def _extract_item_id(item_url: str) -> str:
     return ''
 
 
-def _build_payload(config) -> dict:
-    """构造下单请求体（模板化，版本号走配置）。
-
-    字段以实际抓包为准，此处为参考模板，换场次/版本仅改 .env 即可。
-    """
-    buyer_ids = config.get_buyer_ids()
-    return {
-        'itemId': _extract_item_id(config.ITEM_URL),
-        'skuId': config.SKU_ID,
-        'quantity': config.QUANTITY,
-        'buyerIds': buyer_ids,
-    }
-
-
-def _resolve_sku_id(page, config) -> str:
-    """运行时解析 skuId（config.SKU_ID 为空时的兜底）。
-
-    优先从「确认订单页」上下文取（window.mtop 所在页面，skuId 挂载更可靠）；
-    详情页 __INITIAL_STATE__ 作为兜底（开抢瞬间页面 JS 可能尚未挂载，不可靠）。
-
-    注意：大麦 window.mtop SDK 仅存在于「确认订单页」而非详情页，
-    grab 流程应在开抢前 N 秒通过预约入口进入确认订单页（见 main._prefetch_sku_before_start），
-    然后再调用 create_order，本函数才能命中确认订单页上下文。
-    """
-    if config.SKU_ID:
-        return config.SKU_ID
-    try:
-        sku_id = page.evaluate("""
-            () => {
-                // 优先：确认订单页的订单上下文（具体字段名以抓包为准）
-                const orderCtx = window.__ORDER_CONTEXT__ || window.__orderInfo__
-                    || (window.g_config && window.g_config.orderInfo);
-                if (orderCtx) {
-                    const s = JSON.stringify(orderCtx);
-                    const m = s.match(/"skuId"\\s*:\\s*"?([0-9]+)"?/);
-                    if (m) return m[1];
-                }
-                // 兜底：详情页/通用全局
-                const candidates = [
-                    window.__INITIAL_STATE__,
-                    window.__NUXT__,
-                    window.g_config,
-                ];
-                for (const state of candidates) {
-                    if (!state) continue;
-                    const s = JSON.stringify(state);
-                    const m = s.match(/"skuId"\\s*:\\s*"?([0-9]+)"?/);
-                    if (m) return m[1];
-                }
-                return '';
-            }
-        """)
-        sku_id = str(sku_id or '').strip()
-    except Exception as e:  # noqa: BLE001 - 页面 JS 探测失败不应阻断流程
-        logger.warning('运行时解析 skuId 失败: %s', e)
-        return ''
-    if sku_id:
-        logger.info('运行时解析到 skuId=%s', sku_id)
-    return sku_id
-
-
 def _detect_slider(page) -> bool:
     """按配置化选择器检测滑块是否出现。"""
     if not page or page.is_closed():
         return False
     selectors = getattr(page, '_slider_selectors', None)
-    # 选择器由调用方通过 create_order 注入到 page 上，或从 config 读取
     if not selectors:
         return False
     try:
@@ -138,96 +74,6 @@ def _handle_slider(page, config) -> None:
     logger.warning('等待滑块处理超时（%d 秒），继续尝试下单', config.SLIDER_WAIT_TIMEOUT)
 
 
-def _submit_once(page, config, payload: dict):
-    """在页面 JS 环境调用 mtop SDK 发起一次下单请求，返回响应 dict 或抛异常。"""
-    js = """
-        (payload) => {
-            return new Promise((resolve, reject) => {
-                if (!window.mtop || typeof window.mtop.request !== 'function') {
-                    reject(new Error('window.mtop.request 不存在，'
-                        + '请确认已打开大麦 H5 页面且已登录'));
-                    return;
-                }
-                window.mtop.request({
-                    api: 'mtop.damai.buy.order.create',
-                    v: %s,
-                    data: payload,
-                    ecode: 0,
-                    timeout: %d,
-                    success: (res) => resolve(res),
-                    error: (err) => reject(new Error(JSON.stringify(err))),
-                });
-            });
-        }
-    """ % (json.dumps(config.API_VERSION), int(config.REQUEST_TIMEOUT * 1000))
-
-    return page.evaluate(js, payload)
-
-
-def create_order(page, config):
-    """下单主流程。
-
-    :param page: 已加载登录态的 Playwright Page。**必须已处于「确认订单页」**
-        （window.mtop SDK 仅在确认订单页存在，详情页调用 _submit_once 会因
-        window.mtop.request 不存在而失败）。grab 流程通过预约入口进入确认订单页
-        后再调用本函数（见 main._prefetch_sku_before_start）。
-    :param config: DamaiConfig
-    :return: 下单成功返回订单信息 dict，失败返回 None
-    """
-    from . import notify
-
-    # 将滑块选择器挂到 page 上，供 _detect_slider 使用
-    page._slider_selectors = config.SLIDER_SELECTORS
-
-    payload = _build_payload(config)
-    if not payload.get('skuId'):
-        resolved = _resolve_sku_id(page, config)
-        if resolved:
-            payload['skuId'] = resolved
-    logger.info('下单参数: api=mtop.damai.buy.order.create v=%s itemId=%s skuId=%s',
-                config.API_VERSION, payload.get('itemId'), payload.get('skuId'))
-
-    for attempt in range(1, config.MAX_ATTEMPTS + 1):
-        # 页面/浏览器被关闭（如手动关闭）时立即退出，避免刷垃圾重试日志
-        if page.is_closed():
-            logger.warning('页面已关闭，终止下单流程')
-            return None
-
-        # 每次重试前检测滑块（人工处理过程中可能触发）
-        if _detect_slider(page):
-            _handle_slider(page, config)
-
-        try:
-            start = time.monotonic()
-            response = _submit_once(page, config, payload)
-            elapsed_ms = (time.monotonic() - start) * 1000
-            logger.info('下单请求%d 耗时 %.0fms 响应: %s',
-                        attempt, elapsed_ms, json.dumps(response, ensure_ascii=False)[:200])
-        except Exception as e:  # noqa: BLE001 - 页面 JS/网络异常均需重试
-            # 页面在执行过程中被关闭（TargetClosedError 等），终止而非继续重试
-            if page.is_closed():
-                logger.warning('页面已关闭，终止下单流程')
-                return None
-            logger.warning('下单请求%d 出错: %s', attempt, e)
-            time.sleep(random.uniform(config.RETRY_INTERVAL_MIN, config.RETRY_INTERVAL_MAX))
-            continue
-
-        # 响应状态机（字段以实际抓包为准，此处给通用判定）
-        ret = _parse_response(response)
-        if ret == 'success':
-            logger.info('>>>>>> 下单成功！请尽快到手机端付款！<<<<<<')
-            return response
-        if ret == 'slider':
-            _handle_slider(page, config)
-            continue
-        # 缺货/失败：随机间隔后重试
-        logger.info('下单请求%d 未成功，随机间隔后重试', attempt)
-        time.sleep(random.uniform(config.RETRY_INTERVAL_MIN, config.RETRY_INTERVAL_MAX))
-
-    logger.warning('超过最大下单次数(%d)，下单流程结束', config.MAX_ATTEMPTS)
-    return None
-
-
 def _parse_response(response: dict) -> str:
     """解析下单响应，返回 'success' / 'slider' / 'retry'。
 
@@ -250,3 +96,121 @@ def _parse_response(response: dict) -> str:
         return 'slider'
 
     return 'retry'
+
+
+def _click_submit(page, config) -> dict | None:
+    """点击提交订单按钮，拦截 mtop 下单响应。
+
+    大麦 H5 下单请求体是整个页面组件树（含 signKey/submitref 动态字段），
+    Python 侧无法构造，必须点击页面「提交订单」按钮让页面自己生成请求。
+    用 page.route 拦截 mtop 响应，返回给 Python 判断。
+    """
+    captured = {'response': None}
+
+    def handle_route(route):
+        request = route.request
+        if config.ORDER_API in request.url:
+            try:
+                # 继续请求，捕获响应
+                response = route.fetch()
+                try:
+                    body = response.json()
+                except Exception:
+                    body = {'raw': response.text()[:500]}
+                captured['response'] = body
+                logger.info('拦截到下单响应: %s',
+                            json.dumps(body, ensure_ascii=False)[:200])
+                route.fulfill(response=response)
+            except Exception as e:  # noqa: BLE001
+                logger.warning('拦截下单响应失败: %s', e)
+                route.continue_()
+        else:
+            route.continue_()
+
+    # 注册拦截器，匹配 mtop 下单接口
+    page.route('**/mtop.damai.trade.order.create*', handle_route)
+
+    try:
+        # 点击提交订单按钮
+        selector = config.SUBMIT_ORDER_SELECTOR
+        if not selector:
+            logger.error('SUBMIT_ORDER_SELECTOR 未配置，无法点击提交按钮')
+            return None
+        locator = page.locator(selector).first
+        locator.wait_for(state='visible', timeout=config.PAGE_LOAD_TIMEOUT * 1000)
+        start = time.monotonic()
+        locator.click()
+        logger.info('已点击提交订单按钮，等待响应')
+
+        # 等待拦截到响应（最多等 REQUEST_TIMEOUT + 缓冲）
+        deadline = time.monotonic() + config.REQUEST_TIMEOUT + 5
+        while time.monotonic() < deadline:
+            if captured['response'] is not None:
+                elapsed_ms = (time.monotonic() - start) * 1000
+                logger.info('下单响应耗时 %.0fms', elapsed_ms)
+                return captured['response']
+            time.sleep(0.05)
+        logger.warning('点击提交后 %d 秒未拦截到下单响应',
+                       int(config.REQUEST_TIMEOUT + 5))
+        return None
+    except Exception as e:  # noqa: BLE001
+        logger.warning('点击提交订单失败: %s', e)
+        return None
+    finally:
+        try:
+            page.unroute('**/mtop.damai.trade.order.create*', handle_route)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def create_order(page, config):
+    """下单主流程。
+
+    :param page: 已加载登录态的 Playwright Page。**必须已处于「确认订单页」**
+        （选好票档/数量/观演人后的确认订单页）。grab 流程通过预约入口进入
+        确认订单页后再调用本函数（见 main._prefetch_sku_before_start）。
+    :param config: DamaiConfig
+    :return: 下单成功返回订单信息 dict，失败返回 None
+    """
+    from . import notify
+
+    # 将滑块选择器挂到 page 上，供 _detect_slider 使用
+    page._slider_selectors = config.SLIDER_SELECTORS
+
+    logger.info('开始下单流程: 点击提交订单按钮 → 拦截 mtop 响应')
+
+    for attempt in range(1, config.MAX_ATTEMPTS + 1):
+        # 页面/浏览器被关闭（如手动关闭）时立即退出，避免刷垃圾重试日志
+        if page.is_closed():
+            logger.warning('页面已关闭，终止下单流程')
+            return None
+
+        # 每次重试前检测滑块（人工处理过程中可能触发）
+        if _detect_slider(page):
+            _handle_slider(page, config)
+
+        response = _click_submit(page, config)
+        if response is None:
+            logger.warning('下单请求%d 未捕获到响应', attempt)
+            time.sleep(random.uniform(config.RETRY_INTERVAL_MIN,
+                                      config.RETRY_INTERVAL_MAX))
+            continue
+
+        logger.info('下单请求%d 响应: %s', attempt,
+                    json.dumps(response, ensure_ascii=False)[:200])
+
+        # 响应状态机（字段以实际抓包为准，此处给通用判定）
+        ret = _parse_response(response)
+        if ret == 'success':
+            logger.info('>>>>>> 下单成功！请尽快到手机端付款！<<<<<<')
+            return response
+        if ret == 'slider':
+            _handle_slider(page, config)
+            continue
+        # 缺货/失败：随机间隔后重试
+        logger.info('下单请求%d 未成功，随机间隔后重试', attempt)
+        time.sleep(random.uniform(config.RETRY_INTERVAL_MIN,
+                                  config.RETRY_INTERVAL_MAX))
+
+    logger.warning('超过最大下单次数(%d)，下单流程结束', config.MAX_ATTEMPTS)
+    return None
