@@ -20,18 +20,6 @@ from datetime import datetime
 
 logger = logging.getLogger('damai.core.order')
 
-# 成功/风控/可重试状态的判定关键字（响应字段以实际抓包为准，此处给默认值）
-
-
-def _extract_item_id(item_url: str) -> str:
-    """从详情页 URL 解析 itemId（如 ?itemId=xxxx）。"""
-    if not item_url:
-        return ''
-    for part in item_url.replace('&', '?').split('?'):
-        if part.startswith('itemId='):
-            return part.split('=', 1)[1]
-    return ''
-
 
 def _detect_slider(page) -> bool:
     """按配置化选择器检测滑块是否出现。"""
