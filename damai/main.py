@@ -2,18 +2,22 @@
 
 用法:
     python -m damai.main login     # 扫码登录，保存 storage_state（抢票前一天执行）
-    python -m damai.main reserve   # 开抢前预约抢票：选票档/数量/观演人并提交抢票预约
-    python -m damai.main grab      # 加载登录态，开抢前预取，到达开抢时间后下单
+    python -m damai.main reserve   # 开抢前预约抢票：点主按钮弹弹窗→选票档→确认
+    python -m damai.main grab      # 加载登录态，开抢前进入确认订单页，到达开抢时间后下单
 
-大麦预约抢票机制（2024-2025 实测有效）：
-- 开抢前详情页主按钮文案为「预约抢票」，用户需提前预约想看的票档/数量
-- 倒计时归零时按钮变为「立即抢票」，点击后自动勾选已预约内容直跳确认订单页
-- grab 流程在开抢前 N 秒（GET_SKU_BEFORE_START）走预约入口进入确认订单页预取
-  真实 skuId/buyerIds，开抢瞬间直接发起 mtop 下单，跳过详情页逐项选择
+大麦 H5 真实交互顺序（抓包验证）：
+1. 详情页底部主按钮（「预约抢票」/「立即购买」/「立即抢票」文案随开抢状态变）
+2. 点主按钮 → 弹出选票弹窗（body > div.bui-modal > div.sku-pop-wrapper）
+3. 在弹窗里选票价 → 点弹窗「确认」→ 进入确认订单页
+4. 确认订单页选观演人、数量 → 点「提交订单」触发 mtop.damai.trade.order.create.h5
+
+grab 流程在开抢前 N 秒重复步骤 1-3 进入确认订单页，开抢瞬间直接点「提交订单」下单。
+order.py 用 page.route 拦截 mtop 响应判断成功/失败（请求体由页面生成，Python 不构造）。
 """
 import argparse
 import logging
 import sys
+import time
 
 from .config import DamaiConfig
 
@@ -54,61 +58,35 @@ def cmd_reserve() -> int:
     return 0 if ok else 1
 
 
-def _prefetch_sku_before_start(page, config) -> None:
-    """开抢前预取阶段：走预约入口进入确认订单页，预取真实 skuId/buyerIds 缓存。
+def _enter_confirm_page(page, config) -> None:
+    """开抢前预取阶段：走详情页交互进入确认订单页。
 
-    - 优先读 reserve_state.json 本地缓存（reserve 子命令已写入）
-    - 页面预取作为验证/兜底：从确认订单页 __INITIAL_STATE__ 取 skuId
-    - 预取到的值回填到 config 实例属性，供 order.create_order 复用
-    - 失败时降级（config 保留原值或空），order._resolve_sku_id 兜底
+    大麦 H5 真实交互顺序（抓包验证）：
+    1. 点详情页主按钮 → 弹出选票弹窗
+    2. 在弹窗里选票价
+    3. 点弹窗「确认」→ 进入确认订单页（「提交订单」按钮所在页面）
+
+    本函数重复这一流程，让 page 到达确认订单页，
+    order.create_order 即可点击「提交订单」触发 mtop 下单。
+    失败时降级（page 留在详情页），order.create_order 会因找不到提交按钮而报错。
     """
-    from .core import reserve
+    from .core.reserve import _try_click
 
-    state = reserve.load_reserve_state(config)
-    cached_sku = state.get('skuId', '')
-    cached_buyers = state.get('buyerIds', [])
+    # 1. 点主按钮弹弹窗
+    _try_click(page, config.BUY_NOW_SELECTOR, '立即抢票/立即购买主按钮')
 
-    # 回填缓存到 config 实例属性（类属性是只读的，用实例属性覆盖读取逻辑）
-    if cached_sku and not config.SKU_ID:
-        config.SKU_ID = cached_sku
-        logger.info('预取: 从预约缓存读到 skuId=%s', cached_sku)
-    if cached_buyers and not config.get_buyer_ids():
-        config.BUYER_IDS = ','.join(cached_buyers)
-        logger.info('预取: 从预约缓存读到 buyerIds=%s', cached_buyers)
+    # 2. 在弹窗里选票价
+    if config.RESERVE_SKU_SELECTOR:
+        time.sleep(0.5)  # 等弹窗动画
+        _try_click(page, config.RESERVE_SKU_SELECTOR, '票档（弹窗内）')
+        time.sleep(0.3)
 
-    # 页面预取作为兜底（确认订单页上下文更可靠）
-    page_sku = ''
-    try:
-        page_sku = page.evaluate("""
-            () => {
-                const candidates = [
-                    window.__INITIAL_STATE__,
-                    window.__NUXT__,
-                    window.g_config,
-                ];
-                for (const state of candidates) {
-                    if (!state) continue;
-                    const s = JSON.stringify(state);
-                    const m = s.match(/"skuId"\\s*:\\s*"?([0-9]+)"?/);
-                    if (m) return m[1];
-                }
-                return '';
-            }
-        """)
-        page_sku = str(page_sku or '').strip()
-    except Exception as e:  # noqa: BLE001
-        logger.warning('预取: 页面探测 skuId 异常: %s', e)
+    # 3. 点弹窗「确认」→ 进入确认订单页
+    if config.SKU_CONFIRM_SELECTOR:
+        time.sleep(0.3)
+        _try_click(page, config.SKU_CONFIRM_SELECTOR, '选票弹窗确认按钮')
 
-    if page_sku and not config.SKU_ID:
-        config.SKU_ID = page_sku
-        logger.info('预取: 从页面探测到 skuId=%s', page_sku)
-    elif page_sku and config.SKU_ID and page_sku != config.SKU_ID:
-        logger.warning('预取: 页面 skuId=%s 与缓存 %s 不一致，以页面为准',
-                       page_sku, config.SKU_ID)
-        config.SKU_ID = page_sku
-
-    if not config.SKU_ID:
-        logger.warning('预取: 仍未取到 skuId，开抢时将由 order._resolve_sku_id 兜底')
+    logger.info('预取阶段完成，page 应已进入确认订单页')
 
 
 def cmd_grab() -> int:
@@ -133,14 +111,9 @@ def cmd_grab() -> int:
                     _fmt_local(prefetch_at, offset),
                     DamaiConfig.GET_SKU_BEFORE_START)
         scheduler.wait_until_start_time(prefetch_at, offset)
-        logger.info('进入预取阶段')
+        logger.info('进入预取阶段：走详情页交互进入确认订单页')
         try:
-            # 走「立即抢票」入口（开抢前按钮文案可能仍是「预约抢票」，
-            # 但点击后大麦会引导进入预约/确认订单页，具体抓包后微调）
-            from .core.reserve import _try_click
-            _try_click(page, DamaiConfig.BUY_NOW_SELECTOR, '立即抢票入口',
-                       timeout=3)
-            _prefetch_sku_before_start(page, DamaiConfig)
+            _enter_confirm_page(page, DamaiConfig)
         except Exception as e:  # noqa: BLE001 - 预取失败不阻断，order 兜底
             logger.warning('预取阶段失败，降级为开抢后由 order 兜底: %s', e)
 
@@ -162,7 +135,6 @@ def cmd_grab() -> int:
 
 def _fmt_local(ts: float, offset: float) -> str:
     """格式化时间戳为本地可读时间（含 NTP 偏移修正）。"""
-    import time
     return time.strftime('%H:%M:%S', time.localtime(ts - offset))
 
 
