@@ -67,6 +67,8 @@ class DamaiConfig:
     BUY_NOW_SELECTOR: str = os.getenv("BUY_NOW_SELECTOR", "")
     # 确认订单页「提交订单」按钮选择器（order.create_order 点击它触发下单）
     SUBMIT_ORDER_SELECTOR: str = os.getenv("SUBMIT_ORDER_SELECTOR", ".submit-btn, [class*=submit]")
+    # 选票弹窗「确认」按钮选择器（详情页点主按钮后弹出选票弹窗，选完票价点确认进确认订单页）
+    SKU_CONFIRM_SELECTOR: str = os.getenv("SKU_CONFIRM_SELECTOR", "")
     # 预约时票档/数量/观演人选择器，逗号分隔（具体抓包后填）
     RESERVE_SKU_SELECTOR: str = os.getenv("RESERVE_SKU_SELECTOR", "")
     RESERVE_QTY_SELECTOR: str = os.getenv("RESERVE_QTY_SELECTOR", "")

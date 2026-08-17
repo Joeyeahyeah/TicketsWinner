@@ -1,19 +1,18 @@
-"""预约抢票流程：开抢前预选票档/数量/观演人并提交抢票预约。
+"""预约抢票流程：开抢前预选票档并提交抢票预约。
 
-大麦网开抢前的真实机制（2024-2025 实测有效）：
-- 开抢前详情页主按钮文案为「预约抢票」而非「立即购买」
-- 用户可提前预约：选想看的场次/票档/数量 → 点「提交抢票预约」
-- 倒计时归零时，「预约抢票」按钮自动变为「立即抢票」
-- 点击「立即抢票」后自动勾选已预约的票档/数量，跳过逐项选择直跳确认订单页
+大麦 H5 真实交互顺序（抓包验证）：
+1. 详情页底部主按钮文案「预约抢票」/「立即购买」
+2. 点主按钮 → 弹出选票弹窗（body > div.bui-modal > div.sku-pop-wrapper）
+3. 在弹窗里选票价 → 点弹窗「确认」→ 进入确认订单页
+4. 确认订单页选观演人、数量 → 点「提交订单」触发 mtop 下单
 
-本模块负责「开抢前的预约」这一步，grab 流程会在开抢前 N 秒通过预约入口
-进入确认订单页预取真实 skuId/buyerIds，开抢瞬间直接发起 mtop 下单。
+本模块负责「开抢前的预约」这一步（步骤 1-3），grab 流程会在开抢前 N 秒
+重复步骤 1-3 进入确认订单页，开抢瞬间直接点「提交订单」下单。
 
 设计要点：
-- 所有真机相关选择器（票档/数量/观演人/预约入口）走 DamaiConfig 配置化
+- 所有真机相关选择器走 DamaiConfig 配置化
 - 选择器缺省时降级为「提示用户手动点击」而非硬失败，避免阻塞
-- 预约成功后把 skuId/buyerIds/itemId/数量写入 RESERVE_STATE_PATH，
-  供 grab 预取阶段优先读本地缓存
+- 预约成功后把 itemId/buyerIds/数量写入 RESERVE_STATE_PATH 供 grab 复用
 - 不自动绕过任何风控；触发滑块由调用方处理
 """
 import json
@@ -46,34 +45,6 @@ def _try_click(page, selector: str, label: str, timeout: int = _WAIT_TIMEOUT) ->
         return False
 
 
-def _resolve_sku_id_from_page(page) -> str:
-    """从详情页运行时探测 skuId（与 order._resolve_sku_id 同源逻辑）。
-
-    预约阶段用于把探测到的 skuId 一并写入 reserve_state，供 grab 复用。
-    """
-    try:
-        sku_id = page.evaluate("""
-            () => {
-                const candidates = [
-                    window.__INITIAL_STATE__,
-                    window.__NUXT__,
-                    window.g_config,
-                ];
-                for (const state of candidates) {
-                    if (!state) continue;
-                    const s = JSON.stringify(state);
-                    const m = s.match(/"skuId"\\s*:\\s*"?([0-9]+)"?/);
-                    if (m) return m[1];
-                }
-                return '';
-            }
-        """)
-        return str(sku_id or '').strip()
-    except Exception as e:  # noqa: BLE001
-        logger.warning('预约阶段探测 skuId 失败: %s', e)
-        return ''
-
-
 def save_reserve_state(config, state: dict) -> None:
     """持久化预约状态到 RESERVE_STATE_PATH（grab 预取阶段会读取）。"""
     path = Path(config.RESERVE_STATE_PATH)
@@ -101,8 +72,12 @@ def load_reserve_state(config) -> dict:
 def submit_reserve(page, config) -> bool:
     """在详情页执行预约抢票流程。
 
-    流程：选票档 → 设数量 → 选观演人 → 点「预约抢票」→ 点「提交抢票预约」
-    → 探测 skuId 写入本地缓存。
+    大麦 H5 真实交互顺序（抓包验证）：
+    1. 详情页底部主按钮文案「预约抢票」/「立即购买」
+    2. 点主按钮 → 弹出选票弹窗（body > div.bui-modal > div.sku-pop-wrapper）
+    3. 在弹窗里选票价
+    4. 点弹窗「确认」按钮 → 进入确认订单页（或预约成功页）
+    5. 若有「提交抢票预约」二次确认则点击
 
     :param page: 已加载登录态、已打开演出详情页的 Playwright Page
     :param config: DamaiConfig
@@ -112,12 +87,19 @@ def submit_reserve(page, config) -> bool:
 
     logger.info('开始预约抢票流程')
 
-    # 1. 选票档（可选，选择器留空时提示用户手动选）
+    # 1. 点「预约抢票」/「立即购买」主按钮 → 弹出选票弹窗
+    clicked = _try_click(page, config.RESERVE_SUBMIT_SELECTOR, '预约抢票/立即购买主按钮')
+    if not clicked:
+        logger.warning('主按钮未自动点击，请在浏览器手动点击')
+        return False
+
+    # 2. 等选票弹窗弹出，在弹窗里选票价
     if config.RESERVE_SKU_SELECTOR:
-        _try_click(page, config.RESERVE_SKU_SELECTOR, '票档')
+        time.sleep(0.5)  # 等弹窗动画完成
+        _try_click(page, config.RESERVE_SKU_SELECTOR, '票档（弹窗内）')
         time.sleep(0.3)
 
-    # 2. 设数量（可选）
+    # 3. 设数量（可选，弹窗内可能有数量选择）
     if config.RESERVE_QTY_SELECTOR and config.QUANTITY > 1:
         try:
             page.locator(config.RESERVE_QTY_SELECTOR).first.fill(
@@ -128,38 +110,30 @@ def submit_reserve(page, config) -> bool:
                            config.RESERVE_QTY_SELECTOR, e)
         time.sleep(0.2)
 
-    # 3. 选观演人（可选；预约阶段通常不选观演人，确认订单页才选）
-    if config.RESERVE_BUYER_SELECTOR:
-        for buyer_id in config.get_buyer_ids():
-            # 观演人选择器可能需要按 id 定位，此处按通用点击处理
-            _try_click(page, config.RESERVE_BUYER_SELECTOR, f'观演人 {buyer_id}')
+    # 4. 点弹窗「确认」按钮 → 进入确认订单页/预约成功页
+    if config.SKU_CONFIRM_SELECTOR:
+        time.sleep(0.3)
+        _try_click(page, config.SKU_CONFIRM_SELECTOR, '选票弹窗确认按钮')
 
-    # 4. 点「预约抢票」主按钮
-    clicked = _try_click(page, config.RESERVE_SUBMIT_SELECTOR, '预约抢票按钮')
-    if not clicked:
-        logger.warning('预约主按钮未自动点击，请在浏览器手动点击「预约抢票」')
-
-    # 5. 若弹出「提交抢票预约」二次确认，尝试点击（选择器与主按钮相同时会自然跳过）
+    # 5. 若弹出「提交抢票预约」二次确认，尝试点击（与主按钮选择器相同时自然跳过）
     time.sleep(0.5)
-    _try_click(page, config.RESERVE_SUBMIT_SELECTOR, '提交抢票预约',
+    _try_click(page, config.RESERVE_SUBMIT_SELECTOR, '提交抢票预约（二次确认）',
                timeout=3)
 
-    # 6. 探测 skuId 并保存预约状态（grab 预取阶段会优先读本地缓存）
-    sku_id = config.SKU_ID or _resolve_sku_id_from_page(page)
+    # 6. 保存预约状态（供 grab 预取阶段读本地缓存，order.py 改为拦截真实请求后 skuId 非必需）
     state = {
         'itemId': _extract_item_id(config.ITEM_URL),
-        'skuId': sku_id,
+        'skuId': config.SKU_ID,
         'buyerIds': config.get_buyer_ids(),
         'quantity': config.QUANTITY,
         'reservedAt': int(time.time()),
     }
     save_reserve_state(config, state)
 
-    logger.info('预约流程已完成，skuId=%s，请核对浏览器页面是否已进入预约状态',
-                sku_id or '(未探测到，需抓包填 SKU_ID)')
+    logger.info('预约流程已完成，请核对浏览器页面是否已进入预约状态')
     notify.send_text(
         config.SERVERCHAN_SENDKEY, '大麦预约完成',
-        f'skuId={sku_id or "未探测到"}\n请到大麦首页「我的预约」核对')
+        f'请到大麦首页「我的预约」核对')
     return True
 
 
